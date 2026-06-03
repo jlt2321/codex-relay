@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <title>JLT Relay Web Preview</title>
+  </head>
+  <body>
+    <main class="shell">
+      <section class="panel">
+        <p class="eyebrow">JLT Relay</p>
+        <h1>Web Preview Ready</h1>
+        <p class="summary">
+          Main entry for local previews proxied through JLT Relay.
+        </p>
+        <dl class="status-grid">
+          <div>
+            <dt>Entry target</dt>
+            <dd>127.0.0.1:30000</dd>
+          </div>
+          <div>
+            <dt>Current host</dt>
+            <dd id="current-host">-</dd>
+          </div>
+          <div>
+            <dt>Loaded at</dt>
+            <dd id="loaded-at">-</dd>
+          </div>
+        </dl>
+        <nav class="link-section" aria-label="Preview links">
+          <a class="preview-link primary" data-preview-port="5173" href="#">Vite 5173</a>
+          <a class="preview-link" data-preview-port="4173" href="#">Vite Preview 4173</a>
+          <a class="preview-link" data-preview-port="8080" href="#">Local 8080</a>
+          <a class="preview-link" data-preview-port="19006" href="#">Expo Web 19006</a>
+        </nav>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

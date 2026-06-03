@@ -9,6 +9,7 @@ WORKSPACE_PATH="${JLT_RELAY_WORKSPACE_PATH:-$RELAY_PROJECT_PATH}"
 RELAY_CLI_PATH="${JLT_RELAY_CLI_PATH:-$RELAY_PROJECT_PATH/packages/codex-relay/dist/cli.js}"
 FRPC_PLIST="${JLT_RELAY_FRPC_PLIST:-/Users/mormontjiang/Library/LaunchAgents/com.jlt.codex-relay.frpc.plist}"
 TMUX_SESSION="${JLT_RELAY_TMUX_SESSION:-jlt-relay-local}"
+PREVIEW_TMUX_SESSION="${JLT_RELAY_PREVIEW_TMUX_SESSION:-jlt-vite-preview}"
 
 log() {
   printf '==> %s\n' "$*"
@@ -64,12 +65,22 @@ ensure_relay() {
     "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' caffeinate -ims node '$RELAY_CLI_PATH'"
 }
 
+ensure_web_preview() {
+  log "Restarting web preview in tmux session $PREVIEW_TMUX_SESSION."
+  tmux kill-session -t "$PREVIEW_TMUX_SESSION" >/dev/null 2>&1 || true
+  tmux new-session -d -s "$PREVIEW_TMUX_SESSION" \
+    "cd '$RELAY_PROJECT_PATH'; caffeinate -ims pnpm --filter @codex-relay/mobile dev:workspace-web-preview"
+}
+
 verify() {
   log "Current VPS route:"
   route -n get "$VPS_IP" | awk '/destination:|gateway:|interface:/ {print "  " $0}'
 
   log "Local relay listener:"
   lsof -nP -iTCP:"$LOCAL_PORT" -sTCP:LISTEN || true
+
+  log "Local web preview listener:"
+  lsof -nP -iTCP:30000 -sTCP:LISTEN || true
 
   log "Public relay check:"
   curl -i --max-time 8 "$PUBLIC_URL/v1/version" || true
@@ -82,5 +93,6 @@ verify() {
 ensure_vps_route
 ensure_frpc
 ensure_relay
+ensure_web_preview
 sleep 4
 verify
