@@ -5385,9 +5385,9 @@ function escapeRegExp(value: string) {
 }
 
 async function listCodexAutomations(): Promise<AutomationSummary[]> {
-  let entries: string[];
+  let entries: Array<{ isDirectory(): boolean; name: string }>;
   try {
-    entries = await readdir(automationRootDirectory());
+    entries = await readdir(automationRootDirectory(), { withFileTypes: true });
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
       return [];
@@ -5395,7 +5395,9 @@ async function listCodexAutomations(): Promise<AutomationSummary[]> {
     throw error;
   }
 
-  const automations = await Promise.all(entries.map((entry) => readCodexAutomation(entry)));
+  const automations = await Promise.all(
+    entries.filter((entry) => entry.isDirectory()).map((entry) => readCodexAutomation(entry.name)),
+  );
   return automations
     .filter((automation): automation is AutomationSummary => Boolean(automation))
     .sort((left, right) => left.name.localeCompare(right.name));
@@ -5416,7 +5418,7 @@ async function readCodexAutomation(id: string): Promise<AutomationSummary | unde
     }
     configText = await readFile(automationConfigPath, "utf8");
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
       return undefined;
     }
     throw error;

@@ -936,6 +936,7 @@ describe("Codex Relay server routes", () => {
     const root = await mkdtemp(join(tmpdir(), "codex-relay-automations-"));
     const automationDir = join(root, "daily-report");
     await mkdir(automationDir);
+    await writeFile(join(root, ".run-jitter-salt"), "salt");
     await writeFile(
       join(automationDir, "automation.toml"),
       [
