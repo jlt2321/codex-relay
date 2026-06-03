@@ -352,7 +352,14 @@ export const WorkspaceGitActionResponseSchema = z.object({
   output: z.string().default(""),
 });
 
-export const WORKSPACE_PREVIEW_TAB_VALUES = ["git", "files", "markdown", "web", "ssh"] as const;
+export const WORKSPACE_PREVIEW_TAB_VALUES = [
+  "git",
+  "files",
+  "markdown",
+  "web",
+  "ssh",
+  "automation",
+] as const;
 
 export const WorkspacePreviewTabSchema = z.enum(WORKSPACE_PREVIEW_TAB_VALUES);
 
@@ -402,7 +409,41 @@ export const WorkspacePreviewNavigationRequestSchema = z.discriminatedUnion("tab
   WorkspacePreviewOpenBaseSchema.extend({
     tab: z.literal("ssh"),
   }),
+  WorkspacePreviewOpenBaseSchema.extend({
+    tab: z.literal("automation"),
+  }),
 ]);
+
+export const AutomationStatusSchema = z.enum(["ACTIVE", "PAUSED", "DISABLED", "UNKNOWN"]);
+
+export const AutomationSummarySchema = z.object({
+  id: z.string().trim().min(1),
+  name: z.string().trim().min(1),
+  status: AutomationStatusSchema,
+  kind: z.string().trim().min(1).optional(),
+  prompt: z.string().default(""),
+  rrule: z.string().trim().min(1).optional(),
+  model: z.string().trim().min(1).optional(),
+  reasoningEffort: z.string().trim().min(1).optional(),
+  executionEnvironment: z.string().trim().min(1).optional(),
+  cwds: z.array(z.string().trim().min(1)).default([]),
+  createdAt: z.number().int().nonnegative().optional(),
+  updatedAt: z.number().int().nonnegative().optional(),
+  memory: z.string().default(""),
+});
+
+export const ListAutomationsResponseSchema = z.object({
+  automations: z.array(AutomationSummarySchema),
+});
+
+export const RunAutomationRequestSchema = z.object({
+  workspacePath: z.string().trim().min(1).optional(),
+});
+
+export const RunAutomationResponseSchema = z.object({
+  message: z.string().min(1),
+  threadId: z.string().min(1),
+});
 
 export const WorkspaceTerminalStartRequestSchema = WorkspaceSelectionRequestSchema.extend({
   cols: z.number().int().min(2).max(300).default(80),
@@ -720,6 +761,10 @@ export type WorkspaceTerminalOutputResponse = z.infer<typeof WorkspaceTerminalOu
 export type WorkspaceTerminalInputRequest = z.infer<typeof WorkspaceTerminalInputRequestSchema>;
 export type WorkspaceTerminalResizeRequest = z.infer<typeof WorkspaceTerminalResizeRequestSchema>;
 export type WebPreviewTarget = z.infer<typeof WebPreviewTargetSchema>;
+export type AutomationSummary = z.infer<typeof AutomationSummarySchema>;
+export type ListAutomationsResponse = z.infer<typeof ListAutomationsResponseSchema>;
+export type RunAutomationRequest = z.infer<typeof RunAutomationRequestSchema>;
+export type RunAutomationResponse = z.infer<typeof RunAutomationResponseSchema>;
 export type PairRequest = z.infer<typeof PairRequestSchema>;
 export type PairResponse = z.infer<typeof PairResponseSchema>;
 export type EncryptedPayload = z.infer<typeof EncryptedPayloadSchema>;
@@ -981,6 +1026,9 @@ export const apiPaths = {
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/output/stream`,
   workspaceTerminalResize: (sessionId: string) =>
     `/v1/workspace/terminal/sessions/${encodeURIComponent(sessionId)}/resize`,
+  automations: "/v1/automations",
+  automationRun: (automationId: string) =>
+    `/v1/automations/${encodeURIComponent(automationId)}/runs`,
   imageAttachments: "/v1/attachments/images",
   imageAttachment: (attachmentId: string) =>
     `/v1/attachments/images/${encodeURIComponent(attachmentId)}`,

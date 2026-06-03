@@ -6,6 +6,7 @@ import {
   CommitPushWorkspaceRequestSchema,
   CreateThreadResponseSchema,
   InterruptThreadRunResponseSchema,
+  ListAutomationsResponseSchema,
   ImageAttachmentUploadResponseSchema,
   ListModelsResponseSchema,
   ListQueuedThreadInputsResponseSchema,
@@ -18,6 +19,8 @@ import {
   RateLimitsResponseSchema,
   ResolveApprovalResponseSchema,
   RuntimePreferencesResponseSchema,
+  RunAutomationRequestSchema,
+  RunAutomationResponseSchema,
   RunThreadResponseSchema,
   StatusResponseSchema,
   SubmitThreadInputResponseSchema,
@@ -39,6 +42,7 @@ import {
   type CreateThreadRequest,
   type CreateThreadResponse,
   type ImageAttachmentUploadResponse,
+  type ListAutomationsResponse,
   type ListModelsResponse,
   type ListQueuedThreadInputsResponse,
   type ListSkillsResponse,
@@ -50,6 +54,8 @@ import {
   type ResolveApprovalRequest,
   type ResolveApprovalResponse,
   type RuntimePreferencesResponse,
+  type RunAutomationRequest,
+  type RunAutomationResponse,
   type RunThreadRequest,
   type RunThreadResponse,
   type StatusResponse,
@@ -710,6 +716,24 @@ export async function archiveThread(threadId: string): Promise<ArchiveThreadResp
 
 export async function listModels(): Promise<ListModelsResponse> {
   return request(apiPaths.models, undefined, ListModelsResponseSchema.parse);
+}
+
+export async function listAutomations(): Promise<ListAutomationsResponse> {
+  return request(apiPaths.automations, undefined, ListAutomationsResponseSchema.parse);
+}
+
+export async function runAutomation(
+  automationId: string,
+  body: RunAutomationRequest = {},
+): Promise<RunAutomationResponse> {
+  return request(
+    apiPaths.automationRun(automationId),
+    {
+      method: "POST",
+      body: encryptRequestPayload(RunAutomationRequestSchema.parse(body)),
+    },
+    RunAutomationResponseSchema.parse,
+  );
 }
 
 export async function listSkills(workspacePath?: string): Promise<ListSkillsResponse> {

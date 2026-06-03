@@ -6,7 +6,8 @@ PUBLIC_URL="${JLT_RELAY_PUBLIC_URL:-http://43.143.114.214:8788}"
 LOCAL_PORT="${JLT_RELAY_LOCAL_PORT:-8787}"
 RELAY_PROJECT_PATH="${JLT_RELAY_PROJECT_PATH:-/Users/mormontjiang/Documents/workspace/codex-relay-private}"
 WORKSPACE_PATH="${JLT_RELAY_WORKSPACE_PATH:-$RELAY_PROJECT_PATH}"
-RELAY_CLI_PATH="${JLT_RELAY_CLI_PATH:-$RELAY_PROJECT_PATH/packages/codex-relay/dist/cli.js}"
+RELAY_CLI_PATH="${JLT_RELAY_CLI_PATH:-$RELAY_PROJECT_PATH/packages/codex-relay/src/cli.ts}"
+TSX_BIN="${JLT_RELAY_TSX_BIN:-$RELAY_PROJECT_PATH/node_modules/.bin/tsx}"
 FRPC_PLIST="${JLT_RELAY_FRPC_PLIST:-/Users/mormontjiang/Library/LaunchAgents/com.jlt.codex-relay.frpc.plist}"
 TMUX_SESSION="${JLT_RELAY_TMUX_SESSION:-jlt-relay-local}"
 PREVIEW_TMUX_SESSION="${JLT_RELAY_PREVIEW_TMUX_SESSION:-jlt-vite-preview}"
@@ -56,13 +57,10 @@ ensure_frpc() {
 }
 
 ensure_relay() {
-  log "Building local codex-relay package."
-  pnpm --dir "$RELAY_PROJECT_PATH" --filter codex-relay build >/dev/null
-
   log "Restarting codex-relay in tmux session $TMUX_SESSION."
   tmux kill-session -t "$TMUX_SESSION" >/dev/null 2>&1 || true
   tmux new-session -d -s "$TMUX_SESSION" \
-    "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' caffeinate -ims node '$RELAY_CLI_PATH'"
+    "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' NODE_ENV=development caffeinate -ims '$TSX_BIN' '$RELAY_CLI_PATH'"
 }
 
 ensure_web_preview() {

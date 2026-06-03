@@ -26,6 +26,7 @@ import {
 
 import { FileWorkspacePreviewTab } from "./workspace-preview/FileWorkspacePreviewTab";
 import { GitWorkspacePreviewTab } from "./workspace-preview/GitWorkspacePreviewTab";
+import { AutomationWorkspacePreviewTab } from "./workspace-preview/AutomationWorkspacePreviewTab";
 import type { WorkspaceMarkdownPreviewTarget } from "./workspace-preview/markdown-target";
 import { MarkdownWorkspacePreviewTab } from "./workspace-preview/MarkdownWorkspacePreviewTab";
 import { WorkspaceSshTerminalTab } from "./workspace-preview/WorkspaceSshTerminalTab";
@@ -68,6 +69,11 @@ const WORKSPACE_PREVIEW_TAB_DEFINITIONS: Record<
     icon: "terminal",
     label: "SSH",
     subtitle: "Open a workspace terminal and connect with ssh.",
+  },
+  automation: {
+    icon: "fast",
+    label: "Automation",
+    subtitle: "Run local Codex automations.",
   },
 };
 
@@ -269,7 +275,7 @@ export function WorkspacePreviewSurface({
             <View style={styles.emptyState}>
               <ThemedText type="smallBold">No preview tabs</ThemedText>
               <ThemedText type="small" themeColor="textSecondary">
-                Add Git, Files, Markdown, Web, or SSH to this workspace preview.
+                Add Git, Files, Markdown, Web, SSH, or Automation to this workspace preview.
               </ThemedText>
             </View>
           </View>
@@ -307,8 +313,10 @@ export function WorkspacePreviewSurface({
                   workspacePath={workspacePath}
                   webPreviewTarget={webPreviewTarget}
                 />
-              ) : (
+              ) : tab === "ssh" ? (
                 <WorkspaceSshTerminalTab workspacePath={workspacePath} />
+              ) : (
+                <AutomationWorkspacePreviewTab workspacePath={workspacePath} />
               )}
             </Animated.View>
           ))

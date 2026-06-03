@@ -931,6 +931,106 @@ describe("Codex Relay server routes", () => {
     }
   });
 
+  it("lists local Codex automations", async () => {
+    const previousAutomationsDir = process.env.CODEX_RELAY_AUTOMATIONS_DIR;
+    const root = await mkdtemp(join(tmpdir(), "codex-relay-automations-"));
+    const automationDir = join(root, "daily-report");
+    await mkdir(automationDir);
+    await writeFile(
+      join(automationDir, "automation.toml"),
+      [
+        'id = "daily-report"',
+        'kind = "cron"',
+        'name = "Daily Report"',
+        'prompt = "Summarize today."',
+        'status = "ACTIVE"',
+        'rrule = "FREQ=DAILY;BYHOUR=19"',
+        'model = "gpt-5.4"',
+        'reasoning_effort = "medium"',
+        'execution_environment = "local"',
+        'cwds = ["/tmp/codex-relay"]',
+        "created_at = 1780415671280",
+        "updated_at = 1780496105604",
+      ].join("\n"),
+    );
+    await writeFile(join(automationDir, "memory.md"), "Last run summary.");
+    process.env.CODEX_RELAY_AUTOMATIONS_DIR = root;
+
+    try {
+      const app = createApp({ codex: createMockCodex() });
+      const response = await app.request("/v1/automations");
+      const body = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(body).toMatchObject({
+        automations: [
+          {
+            id: "daily-report",
+            kind: "cron",
+            name: "Daily Report",
+            prompt: "Summarize today.",
+            status: "ACTIVE",
+            rrule: "FREQ=DAILY;BYHOUR=19",
+            model: "gpt-5.4",
+            reasoningEffort: "medium",
+            executionEnvironment: "local",
+            cwds: ["/tmp/codex-relay"],
+            memory: "Last run summary.",
+          },
+        ],
+      });
+    } finally {
+      if (previousAutomationsDir === undefined) {
+        delete process.env.CODEX_RELAY_AUTOMATIONS_DIR;
+      } else {
+        process.env.CODEX_RELAY_AUTOMATIONS_DIR = previousAutomationsDir;
+      }
+    }
+  });
+
+  it("runs local Codex automations as new threads", async () => {
+    const previousAutomationsDir = process.env.CODEX_RELAY_AUTOMATIONS_DIR;
+    const root = await mkdtemp(join(tmpdir(), "codex-relay-automations-"));
+    const workspace = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const automationDir = join(root, "daily-report");
+    await mkdir(automationDir);
+    await writeFile(
+      join(automationDir, "automation.toml"),
+      [
+        'id = "daily-report"',
+        'name = "Daily Report"',
+        'prompt = "Summarize today."',
+        'status = "ACTIVE"',
+        'model = "gpt-5.4"',
+        'reasoning_effort = "medium"',
+        `cwds = ["${workspace}"]`,
+      ].join("\n"),
+    );
+    process.env.CODEX_RELAY_AUTOMATIONS_DIR = root;
+
+    try {
+      const app = createApp({ codex: createMockCodex(), workspacePath: workspace });
+      const response = await app.request("/v1/automations/daily-report/runs", {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "content-type": "application/json" },
+      });
+      const body = await response.json();
+
+      expect(response.status).toBe(201);
+      expect(body).toMatchObject({
+        message: "Started Daily Report.",
+        threadId: expect.any(String),
+      });
+    } finally {
+      if (previousAutomationsDir === undefined) {
+        delete process.env.CODEX_RELAY_AUTOMATIONS_DIR;
+      } else {
+        process.env.CODEX_RELAY_AUTOMATIONS_DIR = previousAutomationsDir;
+      }
+    }
+  });
+
   it("rejects expired client tokens", async () => {
     const sessions = await createTursoPairingSessionStore(":memory:");
     await sessions.createSession("expired-client-token", { expiresAt: Date.now() - 1 });

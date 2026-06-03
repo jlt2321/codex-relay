@@ -1,5 +1,6 @@
 import {
   ArchiveThreadResponseSchema,
+  ListAutomationsResponseSchema,
   ChatMessageSchema,
   CheckoutWorkspaceBranchRequestSchema,
   CommitPushWorkspaceRequestSchema,
@@ -19,6 +20,8 @@ import {
   RateLimitsResponseSchema,
   ResolveApprovalRequestSchema,
   ResolveApprovalResponseSchema,
+  RunAutomationRequestSchema,
+  RunAutomationResponseSchema,
   RunThreadRequestSchema,
   RuntimePreferencesResponseSchema,
   StatusResponseSchema,
@@ -49,11 +52,13 @@ import {
   stripPromptSkillMentions,
   type ApprovalMode,
   type ArchiveThreadResponse,
+  type AutomationSummary,
   type ChatMessage,
   type CreateThreadResponse,
   type ErrorResponse,
   type ImageAttachmentUploadResponse,
   type ListThreadsResponse,
+  type ListAutomationsResponse,
   type ListWorkspaceFilesResponse,
   type ListWorkspaceDirectoriesResponse,
   type PairResponse,
@@ -63,6 +68,7 @@ import {
   type PromptSkill,
   type ReasoningEffort,
   type RunThreadResponse,
+  type RunAutomationResponse,
   type RuntimeMode,
   type RuntimePreferences,
   type SandboxMode,
@@ -148,6 +154,7 @@ const WORKSPACE_FILE_PREVIEW_MAX_BYTES = 256 * 1024;
 const LOCAL_MARKDOWN_IMAGE_PATTERN = /!\[([^\]]*)\]\(([^)]*)\)/g;
 const LOCAL_IMAGE_REFERENCE_PATTERN = /\.(gif|heic|heif|jpe?g|png|webp)$/i;
 const imageAttachmentDirectory = codexRelayDataPath("attachments/images");
+const defaultAutomationRootDirectory = join(homedir(), ".codex", "automations");
 const requirePackage = createRequire(import.meta.url);
 const relayPackage = requirePackage("../package.json") as { version: string };
 const collaborationModeTemplateNames = ["default", "execute", "pair_programming", "plan"] as const;
@@ -1155,6 +1162,126 @@ export function createApp(options: AppOptions = {}) {
         502,
       );
     }
+  });
+
+  app.get(apiPaths.automations, async (c) => {
+    try {
+      const response: ListAutomationsResponse = ListAutomationsResponseSchema.parse({
+        automations: await listCodexAutomations(),
+      });
+      return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
+    } catch (error) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("automations_unavailable", errorMessage(error)),
+        502,
+      );
+    }
+  });
+
+  app.post("/v1/automations/:automationId/runs", async (c) => {
+    const automationId = c.req.param("automationId");
+    const automation = await readCodexAutomation(automationId);
+    if (!automation) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("not_found", `Automation ${automationId} is not known to this server.`),
+        404,
+      );
+    }
+
+    const parsed = await parseRequestJson(
+      c,
+      options.pairing,
+      secureSessionsByTokenHash,
+      RunAutomationRequestSchema,
+    );
+    if (!parsed.success) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        validationError(parsed.error),
+        400,
+      );
+    }
+
+    const selectedWorkspacePath = await validateThreadWorkspacePath(
+      workspacePath,
+      parsed.data.workspacePath ?? automation.cwds[0],
+    );
+    if (!selectedWorkspacePath.success) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("invalid_workspace_path", selectedWorkspacePath.error),
+        400,
+      );
+    }
+
+    const runOptions = withRuntimePreferences(await preferences.read(selectedWorkspacePath.path), {
+      model: automation.model,
+      prompt: automation.prompt,
+      reasoningEffort: automation.reasoningEffort as ReasoningEffort | undefined,
+      title: automation.name,
+      workspacePath: selectedWorkspacePath.path,
+    });
+    const { threadId } = appServer
+      ? await createAppServerThreadRecord({
+          appServer,
+          messagesByThreadId,
+          options: runOptions,
+          persistRuntimeOptions: true,
+          threads,
+          title: automation.name,
+          workspacePath: selectedWorkspacePath.path,
+        })
+      : createThreadRecord({
+          codex,
+          liveThreads,
+          messagesByThreadId,
+          threads,
+          title: automation.name,
+          prompt: automation.prompt,
+          runOptions,
+          threadOptions: buildThreadOptions(
+            { ...threadOptions, workingDirectory: selectedWorkspacePath.path },
+            runOptions,
+          ),
+        });
+
+    const response = await runPromptBuffered({
+      codex,
+      liveThreads,
+      messagesByThreadId,
+      prompt: automation.prompt,
+      attachments: [],
+      threadId,
+      threadOptions: { ...threadOptions, workingDirectory: selectedWorkspacePath.path },
+      runOptions,
+      skills: [],
+      threads,
+    });
+    if (response.status >= 400) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        response.body,
+        response.status,
+      );
+    }
+
+    const body: RunAutomationResponse = RunAutomationResponseSchema.parse({
+      message: `Started ${automation.name}.`,
+      threadId,
+    });
+    return secureJson(c, options.pairing, secureSessionsByTokenHash, body, 201);
   });
 
   app.get(apiPaths.workspaceFiles, async (c) => {
@@ -5255,6 +5382,147 @@ function rewriteWebPreviewText(text: string, port: number) {
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function listCodexAutomations(): Promise<AutomationSummary[]> {
+  let entries: string[];
+  try {
+    entries = await readdir(automationRootDirectory());
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const automations = await Promise.all(entries.map((entry) => readCodexAutomation(entry)));
+  return automations
+    .filter((automation): automation is AutomationSummary => Boolean(automation))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function readCodexAutomation(id: string): Promise<AutomationSummary | undefined> {
+  if (!isSafeAutomationId(id)) {
+    return undefined;
+  }
+
+  const automationDirectory = join(automationRootDirectory(), id);
+  const automationConfigPath = join(automationDirectory, "automation.toml");
+  let configText: string;
+  try {
+    const configStat = await stat(automationConfigPath);
+    if (!configStat.isFile()) {
+      return undefined;
+    }
+    configText = await readFile(automationConfigPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+
+  const parsed = parseFlatToml(configText);
+  const memory = await readAutomationMemory(join(automationDirectory, "memory.md"));
+  return {
+    id: stringValue(parsed.id) ?? id,
+    name: stringValue(parsed.name) ?? id,
+    status: automationStatus(stringValue(parsed.status)),
+    kind: stringValue(parsed.kind),
+    prompt: stringValue(parsed.prompt) ?? "",
+    rrule: stringValue(parsed.rrule),
+    model: stringValue(parsed.model),
+    reasoningEffort: stringValue(parsed.reasoning_effort),
+    executionEnvironment: stringValue(parsed.execution_environment),
+    cwds: stringArrayValue(parsed.cwds),
+    createdAt: numberValue(parsed.created_at),
+    updatedAt: numberValue(parsed.updated_at),
+    memory,
+  };
+}
+
+async function readAutomationMemory(path: string) {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return "";
+    }
+    throw error;
+  }
+}
+
+function parseFlatToml(text: string) {
+  const values: Record<string, unknown> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("[")) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf("=");
+    if (separatorIndex < 1) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const rawValue = trimmed.slice(separatorIndex + 1).trim();
+    values[key] = parseFlatTomlValue(rawValue);
+  }
+  return values;
+}
+
+function parseFlatTomlValue(value: string): unknown {
+  if (value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+
+  if (value.startsWith("[") && value.endsWith("]")) {
+    const body = value.slice(1, -1).trim();
+    if (!body) {
+      return [];
+    }
+    return body
+      .split(",")
+      .map((item) => parseFlatTomlValue(item.trim()))
+      .filter((item): item is string => typeof item === "string" && item.length > 0);
+  }
+
+  const number = Number(value);
+  return Number.isFinite(number) ? number : value;
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function stringArrayValue(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function automationStatus(value: string | undefined): AutomationSummary["status"] {
+  if (value === "ACTIVE" || value === "PAUSED" || value === "DISABLED") {
+    return value;
+  }
+  return "UNKNOWN";
+}
+
+function isSafeAutomationId(value: string) {
+  return /^[A-Za-z0-9._-]+$/.test(value);
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
+}
+
+function automationRootDirectory() {
+  return process.env.CODEX_RELAY_AUTOMATIONS_DIR ?? defaultAutomationRootDirectory;
 }
 
 function readCollaborationModeTemplate(name: (typeof collaborationModeTemplateNames)[number]) {
