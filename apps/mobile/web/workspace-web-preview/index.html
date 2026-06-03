@@ -13,9 +13,7 @@
       <section class="panel">
         <p class="eyebrow">JLT Relay</p>
         <h1>Web Preview Ready</h1>
-        <p class="summary">
-          Main entry for local previews proxied through JLT Relay.
-        </p>
+        <p class="summary">Local preview entry proxied through JLT Relay.</p>
         <dl class="status-grid">
           <div>
             <dt>Entry target</dt>
@@ -30,12 +28,13 @@
             <dd id="loaded-at">-</dd>
           </div>
         </dl>
-        <nav class="link-section" aria-label="Preview links">
-          <a class="preview-link primary" data-preview-port="5173" href="#">Vite 5173</a>
-          <a class="preview-link" data-preview-port="4173" href="#">Vite Preview 4173</a>
-          <a class="preview-link" data-preview-port="8080" href="#">Local 8080</a>
-          <a class="preview-link" data-preview-port="19006" href="#">Expo Web 19006</a>
-        </nav>
+        <div class="section-header">
+          <h2>Targets</h2>
+          <button class="refresh-button" id="refresh-targets" type="button">Refresh</button>
+        </div>
+        <div class="target-list" id="target-list" aria-live="polite">
+          <div class="target-card muted">Checking local preview targets...</div>
+        </div>
       </section>
     </main>
     <script type="module" src="/src/main.ts"></script>

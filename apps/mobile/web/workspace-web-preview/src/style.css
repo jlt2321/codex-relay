@@ -94,13 +94,22 @@ dd {
   line-height: 1.45;
 }
 
-.link-section {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 10px;
-  margin-top: 18px;
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 20px;
 }
 
+.section-header h2 {
+  margin: 0;
+  color: #f4f5f7;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.refresh-button,
 .preview-link {
   min-height: 44px;
   border: 1px solid rgba(255, 255, 255, 0.14);
@@ -113,18 +122,91 @@ dd {
   letter-spacing: 0;
   text-align: center;
   cursor: pointer;
+}
+
+.refresh-button {
+  padding: 0 14px;
+}
+
+.refresh-button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.target-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.target-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+}
+
+.target-card.unavailable,
+.target-card.muted {
+  color: #8f98a6;
+}
+
+.target-copy {
+  min-width: 0;
+}
+
+.target-copy h3 {
+  margin: 0;
+  color: #f4f5f7;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.target-card.unavailable .target-copy h3 {
+  color: #b8c0cc;
+}
+
+.target-copy p,
+.empty-state {
+  margin: 6px 0 0;
+  color: #8f98a6;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.empty-state {
+  margin: 0;
+}
+
+.status-badge {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #8f98a6;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 9px 10px;
+}
+
+.preview-link {
   display: grid;
   place-items: center;
-  padding: 0 14px;
+  min-width: 84px;
+  padding: 0 16px;
   text-decoration: none;
 }
 
-.preview-link.primary {
+.preview-link {
   border-color: rgba(56, 189, 248, 0.4);
   background: #2563eb;
 }
 
-.preview-link:active {
+.preview-link:active,
+.refresh-button:active:not(:disabled) {
   transform: translateY(1px);
 }
 
@@ -142,7 +224,12 @@ dd {
     font-size: 26px;
   }
 
-  .link-section {
+  .target-card {
     grid-template-columns: 1fr;
+  }
+
+  .preview-link,
+  .status-badge {
+    width: 100%;
   }
 }
