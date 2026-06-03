@@ -1145,8 +1145,8 @@ export function ChatScreen() {
         setPasteApprovalServerUrl(undefined);
         hapticSuccess();
         await refresh();
-      } catch {
-        Alert.alert("Pairing failed", pairingFailureAlertMessage);
+      } catch (caught) {
+        Alert.alert("Pairing failed", pairingFailureAlertMessage(caught));
       } finally {
         isHandlingPairingLink = false;
         setPastePairing(false);
@@ -1238,7 +1238,7 @@ export function ChatScreen() {
         setScannerMessage(scannerPairingFailureMessage(caught));
         Alert.alert(
           isInvalidPairingQr ? "Invalid QR code" : "Pairing failed",
-          isInvalidPairingQr ? invalidPairingQrAlertMessage : pairingFailureAlertMessage,
+          isInvalidPairingQr ? invalidPairingQrAlertMessage : pairingFailureAlertMessage(caught),
         );
       }
     },
@@ -2417,14 +2417,16 @@ function errorMessage(error: unknown) {
 function scannerPairingFailureMessage(error: unknown) {
   return isPairingQrPayloadError(error)
     ? "This is not the Codex Relay QR. Scan the QR shown on your computer."
-    : "Could not connect. Use the same Wi-Fi or turn on Tailscale, then scan again.";
+    : "Could not connect to your public relay. Confirm the VPS port, Caddy proxy, reverse SSH tunnel, and local relay are all running, then scan again.";
 }
 
 const invalidPairingQrAlertMessage =
   "Run npx codex-relay@latest on your computer, then scan the QR shown there.";
 
-const pairingFailureAlertMessage =
-  "Use the same Wi-Fi on your phone and computer. If that is not possible, turn on Tailscale on both devices and scan again.";
+function pairingFailureAlertMessage(error: unknown) {
+  const message = errorMessage(error);
+  return `${message}\n\nCheck that the QR Mobile URL opens in Safari and that the VPS port, Caddy proxy, reverse SSH tunnel, and local codex-relay process are running.`;
+}
 
 async function safeAsyncValue<T>(callback: () => Promise<T>) {
   try {
@@ -2457,7 +2459,12 @@ function approvalPort(serverUrl?: string) {
   }
 
   try {
-    return new URL(serverUrl).port;
+    const parsed = new URL(serverUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (host !== "localhost" && host !== "127.0.0.1" && host !== "::1") {
+      return undefined;
+    }
+    return parsed.port;
   } catch {
     return undefined;
   }

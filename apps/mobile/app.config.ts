@@ -2,16 +2,16 @@ import type { ConfigContext, ExpoConfig } from "expo/config";
 
 export default function appConfig(_context: ConfigContext): ExpoConfig {
   return {
-    name: "Codex Relay",
-    slug: "codex-relay",
+    name: "JLT Relay",
+    slug: "jlt-relay",
     version: "1.1.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
-    scheme: "codex-relay",
+    scheme: ["jlt-relay", "codex-relay"],
     userInterfaceStyle: "automatic",
     ios: {
       icon: "./assets/images/icon.png",
-      bundleIdentifier: "com.gronstudio.codexrelay",
+      bundleIdentifier: "com.jlt2321.jltrelay",
       infoPlist: {
         NSAppTransportSecurity: {
           NSAllowsArbitraryLoads: true,
@@ -19,7 +19,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
         },
         ITSAppUsesNonExemptEncryption: false,
         NSLocalNetworkUsageDescription:
-          "Codex Relay uses the local network to connect this device to the Codex Relay server running on your computer.",
+          "JLT Relay connects this device to your own relay server running on your computer or VPS tunnel.",
       },
     },
     android: {
@@ -29,7 +29,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
         monochromeImage: "./assets/images/android-icon-monochrome.png",
       },
       predictiveBackGestureEnabled: false,
-      package: "com.gronstudio.codexrelay",
+      package: "com.jlt2321.jltrelay",
       permissions: ["android.permission.CAMERA"],
     },
     web: {
@@ -60,7 +60,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
         "expo-camera",
         {
           cameraPermission:
-            "Codex Relay uses the camera to scan QR codes that contain your local relay server address, for example to connect this device to the Codex Relay server running on your computer.",
+            "JLT Relay uses the camera to scan QR codes that contain your private relay server address.",
           microphonePermission: false,
           recordAudioAndroid: false,
           barcodeScannerEnabled: true,
@@ -70,7 +70,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
         "expo-image-picker",
         {
           photosPermission:
-            "Codex Relay uses photo library access so you can attach images to a Codex chat, for example to ask Codex to inspect a screenshot.",
+            "JLT Relay uses photo library access so you can attach images to a Codex chat, for example to ask Codex to inspect a screenshot.",
           microphonePermission: false,
         },
       ],
@@ -105,7 +105,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
     extra: {
       router: {},
       eas: {
-        projectId: "6659e28f-2ac7-4055-8f56-7b4ca5e65847",
+        projectId: "9871949d-7a32-4606-99ca-4ed63b4347ae",
       },
     },
   };

@@ -1,4 +1,4 @@
-import { Linking, Pressable, View } from "react-native";
+import { Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { StyleSheet } from "react-native-unistyles";
 
@@ -6,8 +6,6 @@ import { ThemedText } from "@/components/themed-text";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Fonts } from "@/constants/theme";
-
-const tailscaleAppStoreUrl = "https://apps.apple.com/us/app/tailscale/id1470499037";
 
 export function ConnectionBanner({
   connection,
@@ -52,8 +50,8 @@ export function ConnectionBanner({
             <View style={styles.pairCopy}>
               <ThemedText type="smallBold" style={styles.pairTitle}>
                 {connection === "checking"
-                  ? "Connecting to your computer"
-                  : "Reconnecting to your computer"}
+                  ? "Connecting to your private relay"
+                  : "Reconnecting to your private relay"}
               </ThemedText>
               <ThemedText
                 type="small"
@@ -85,7 +83,7 @@ export function ConnectionBanner({
             <View style={styles.pairStatusDot} />
             <View style={styles.pairCopy}>
               <ThemedText type="smallBold" style={styles.pairTitle}>
-                Connect to your computer
+                Connect to your private relay
               </ThemedText>
               <ThemedText
                 type="small"
@@ -93,7 +91,7 @@ export function ConnectionBanner({
                 style={styles.pairSubtitle}
                 numberOfLines={2}
               >
-                {hasPairedSession ? statusText : "No paired computer yet"}
+                {hasPairedSession ? statusText : "No paired relay yet"}
               </ThemedText>
             </View>
           </View>
@@ -102,8 +100,8 @@ export function ConnectionBanner({
               Pair this phone once
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary" style={styles.onboardingCopy}>
-              Run one command on your computer, scan the QR code, then approve the phone in that
-              same terminal.
+              Run the relay on your computer, keep the VPS tunnel online, scan the QR code, then
+              approve this phone in Terminal.
             </ThemedText>
           </View>
           <View style={styles.stepList}>
@@ -111,17 +109,14 @@ export function ConnectionBanner({
               icon="terminal"
               label="1"
               title="Start the relay"
-              body="Open Terminal on your computer and run:"
+              body="Open Terminal in your workspace and run:"
               command="npx codex-relay@latest"
             />
             <PairingStep
               icon="workspace"
               label="2"
-              title="Choose Wi-Fi or Tailscale"
-              body="Same Wi-Fi is enough nearby. To use Codex Relay away from this Wi-Fi, install Tailscale on your computer and phone, sign in to the same account, and make sure both say Connected before scanning."
-              actionLabel="Open Tailscale on App Store"
-              actionAccessibilityLabel="Open Tailscale on the App Store"
-              onAction={() => void Linking.openURL(tailscaleAppStoreUrl)}
+              title="Use the VPS public URL"
+              body="For remote access, set CODEX_RELAY_PUBLIC_URL to your VPS entry, such as http://43.143.114.214:8788, and keep the reverse SSH tunnel connected."
             />
             <PairingStep
               icon="check"

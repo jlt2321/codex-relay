@@ -26,7 +26,7 @@ export default function DrawerLayout() {
         name="index"
         options={{
           drawerLabel: "Threads",
-          title: "Codex Relay",
+          title: "JLT Relay",
         }}
       />
       {__DEV__ ? (

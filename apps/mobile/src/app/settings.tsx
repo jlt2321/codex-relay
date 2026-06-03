@@ -262,7 +262,7 @@ export default function SettingsScreen() {
             <Animated.View layout={settingsLayoutTransition} style={styles.projectLinkList}>
               <Pressable
                 accessibilityRole="link"
-                accessibilityLabel="Open Codex Relay GitHub repository"
+                accessibilityLabel="Open JLT Relay GitHub repository"
                 onPress={() => openProjectLink(codexRelayRepositoryUrl)}
                 style={({ pressed }) => [styles.projectLinkRow, pressed && styles.pressed]}
               >

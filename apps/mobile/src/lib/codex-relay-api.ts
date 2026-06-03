@@ -90,14 +90,14 @@ import {
   threadRunStreamEventTypes,
 } from "./thread-run-stream";
 
-const defaultServerUrl = "http://localhost:8787";
+const defaultServerUrl = "http://43.143.114.214:8788";
 const skillsPath = "/v1/skills";
 const skillsRequestTimeoutMs = 8000;
 const clientSessionIdStorageKey = "codex-relay.client-session-id";
 const clientTokenExpiresAtStorageKey = "codex-relay.client-token-expires-at";
 const clientTokenStorageKey = "codex-relay.client-token";
 const clientTokenRefreshLeewayMs = 24 * 60 * 60 * 1000;
-const pairingConnectTimeoutMs = 2500;
+const pairingConnectTimeoutMs = 10_000;
 const streamRequestTimeoutMs = 10 * 60 * 1000;
 const terminalStreamRequestTimeoutMs = 24 * 60 * 60 * 1000;
 const serverUrlCandidatesStorageKey = "codex-relay.server-url-candidates";
@@ -107,6 +107,8 @@ const storage = createMMKV({ id: "codex-relay" });
 type NetworkRequestInit = RequestInit & {
   timeoutMs?: number;
 };
+
+type NetworkTransport = "fetch" | "dfetch" | "nitroFetch";
 
 type PairingQrPayload = {
   serverPublicKey: string;
@@ -256,7 +258,7 @@ async function pairWithApproval(
     },
     body: JSON.stringify({
       clientSessionId: getClientSessionId(),
-      clientName: "Codex Relay mobile",
+      clientName: "JLT Relay iPhone",
       secure: {
         clientEphemeralPublicKey: securePairing.clientEphemeralPublicKey,
         clientNonce: securePairing.clientNonce,
@@ -269,9 +271,7 @@ async function pairWithApproval(
   const responsePayload = await response.json().catch(() => undefined);
 
   if (!response.ok) {
-    throw new Error(
-      errorMessage(responsePayload, `Codex Relay server returned ${response.status}`),
-    );
+    throw new Error(errorMessage(responsePayload, `JLT Relay server returned ${response.status}`));
   }
 
   const parsed = PairResponseSchema.parse(responsePayload);
@@ -306,7 +306,7 @@ async function waitForPairingApproval(serverUrl: string, approvalCode: string) {
     }
     if (!response.ok) {
       throw new Error(
-        errorMessage(responsePayload, `Codex Relay server returned ${response.status}`),
+        errorMessage(responsePayload, `JLT Relay server returned ${response.status}`),
       );
     }
     return PairResponseSchema.parse(responsePayload);
@@ -316,28 +316,47 @@ async function waitForPairingApproval(serverUrl: string, approvalCode: string) {
 }
 
 async function fetchWithNetworkContext(url: string, init?: NetworkRequestInit) {
-  if (isLocalhostUrl(url)) {
+  const transports = networkTransportsForUrl(url, init);
+  const errors: string[] = [];
+
+  for (const transport of transports) {
     try {
-      return await requestWithOptionalTimeout(fetch(url, init), init?.timeoutMs);
-    } catch (error) {
-      throw new Error(
-        `Network request failed via fetch for ${url}: ${errorMessage(error, "network error")}`,
+      return await requestWithOptionalTimeout(
+        requestWithTransport(transport, url, init),
+        init?.timeoutMs,
       );
+    } catch (error) {
+      errors.push(`${transport}: ${errorMessage(error, "network error")}`);
     }
   }
 
-  const useDirectFetch = shouldUseDirectFetch(url, init);
-  const transport = useDirectFetch ? "dfetch" : "nitroFetch";
-  try {
-    if (useDirectFetch) {
-      return await requestWithOptionalTimeout(dfetch(url, init), init?.timeoutMs);
-    }
-    return await requestWithOptionalTimeout(nitroFetch(url, init), init?.timeoutMs);
-  } catch (error) {
-    throw new Error(
-      `Network request failed via ${transport} for ${url}: ${errorMessage(error, "network error")}`,
-    );
+  throw new Error(`Network request failed for ${url}. ${errors.join("; ")}`);
+}
+
+function networkTransportsForUrl(url: string, init?: NetworkRequestInit): NetworkTransport[] {
+  if (isLocalhostUrl(url)) {
+    return ["fetch"];
   }
+
+  if (Platform.OS !== "ios") {
+    return ["fetch", "nitroFetch"];
+  }
+
+  if (shouldUseDirectFetch(url, init)) {
+    return ["dfetch", "fetch", "nitroFetch"];
+  }
+
+  return ["fetch", "nitroFetch", "dfetch"];
+}
+
+function requestWithTransport(transport: NetworkTransport, url: string, init?: NetworkRequestInit) {
+  if (transport === "dfetch") {
+    return dfetch(url, init);
+  }
+  if (transport === "nitroFetch") {
+    return nitroFetch(url, init);
+  }
+  return fetch(url, init);
 }
 
 function shouldUseDirectFetch(url: string, init?: NetworkRequestInit) {
@@ -349,15 +368,8 @@ function shouldUseDirectFetch(url: string, init?: NetworkRequestInit) {
   }
 
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
-      host.endsWith(".local") ||
-      host.endsWith(".ts.net") ||
-      host.endsWith(".beta.tailscale.net") ||
-      isPrivateIPv4Host(host) ||
-      isCarrierGradePrivateIPv4Host(host) ||
-      isLocalIPv6Host(host)
-    );
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
   } catch {
     return false;
   }
@@ -437,9 +449,7 @@ export async function refreshSession() {
     if (isSessionInvalidStatus(response.status)) {
       clearClientSession();
     }
-    throw new Error(
-      errorMessage(responsePayload, `Codex Relay server returned ${response.status}`),
-    );
+    throw new Error(errorMessage(responsePayload, `JLT Relay server returned ${response.status}`));
   }
 
   const parsed = PairResponseSchema.parse(decryptResponsePayload(responsePayload));
@@ -491,10 +501,10 @@ function parsePairingQrPayload(payload: unknown): PairingQrPayload {
   try {
     parsed = new URL(payload.trim());
   } catch {
-    throw new PairingQrPayloadError("Scan the pairing QR from the Codex Relay server.");
+    throw new PairingQrPayloadError("Scan the pairing QR from your relay server.");
   }
   if (parsed.protocol !== "codex-relay:" || parsed.hostname !== "pair") {
-    throw new PairingQrPayloadError("Scan the pairing QR from the Codex Relay server.");
+    throw new PairingQrPayloadError("Scan the pairing QR from your relay server.");
   }
 
   const serverUrl = parsed.searchParams.get("serverUrl");
@@ -627,7 +637,7 @@ function serverUrlCandidateLabel(url: string) {
 function pairingCandidateFailureMessage(errors: PairingCandidateConnectionError[]) {
   const attemptedUrls = errors.map((error) => error.serverUrl).join(", ");
   return attemptedUrls
-    ? `Could not reach any server URL from the pairing QR. Tried: ${attemptedUrls}. Make sure this device is on the same network, Tailscale is connected, or set CODEX_RELAY_PUBLIC_URL to a reachable URL.`
+    ? `Could not reach any server URL from the pairing QR. Tried: ${attemptedUrls}. Confirm the VPS tunnel is running, the public port is open, and CODEX_RELAY_PUBLIC_URL uses the reachable public URL.`
     : "Could not reach the server URL from the pairing QR.";
 }
 

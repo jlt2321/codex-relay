@@ -677,7 +677,7 @@ function DrawerFooter({
     <View style={[styles.footerBlock, { paddingBottom: Math.max(bottomInset, 8) }]}>
       <Pressable
         accessibilityRole="link"
-        accessibilityLabel="Open Codex Relay GitHub repository"
+        accessibilityLabel="Open JLT Relay GitHub repository"
         onPress={() => void Linking.openURL(codexRelayRepositoryUrl)}
         style={styles.repositoryFooter}
       >
@@ -687,7 +687,7 @@ function DrawerFooter({
               <FaGithub size={16} color={theme.text} />
             </View>
             <View style={[styles.repositoryFooterCopy, pressed && styles.drawerPressedContent]}>
-              <Text style={styles.repositoryFooterTitle}>Codex Relay on GitHub</Text>
+              <Text style={styles.repositoryFooterTitle}>JLT Relay on GitHub</Text>
             </View>
           </>
         )}
@@ -894,7 +894,7 @@ function DrawerListHeader({
   return (
     <View style={styles.header}>
       <View style={styles.brandRow}>
-        <Text style={styles.brandText}>Codex Relay</Text>
+        <Text style={styles.brandText}>JLT Relay</Text>
         <Button
           accessibilityLabel="Close menu"
           onPress={onCloseMenu}
