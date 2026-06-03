@@ -46,4 +46,9 @@ export default defineConfig({
   ],
   publicDir: false,
   root: "./web/workspace-ssh-terminal",
+  server: {
+    host: "127.0.0.1",
+    port: 30000,
+    strictPort: true,
+  },
 });

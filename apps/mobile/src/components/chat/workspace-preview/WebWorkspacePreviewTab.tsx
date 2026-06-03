@@ -11,7 +11,11 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Text as UiText } from "@/components/ui/text";
 import { Colors, Fonts, Spacing } from "@/constants/theme";
-import { getCodexRelayServerUrl } from "@/lib/codex-relay-api";
+import {
+  codexRelayWebPreviewRequestHeaders,
+  getCodexRelayServerUrl,
+  resolveCodexRelayWebPreviewUrl,
+} from "@/lib/codex-relay-api";
 import { hapticSelection } from "@/lib/haptics";
 import {
   updateWorkspacePreviewWebState,
@@ -36,10 +40,20 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
   const savedWebState = useSelector(() =>
     workspacePreviewStore$.webStateByWorkspacePath[workspaceKey].get(),
   );
+  const shouldUseDefaultWebPreviewUrl = useMemo(
+    () =>
+      isStaleDefaultRelayPreviewUrl(savedWebState?.url, baseServerUrl) ||
+      isStaleDefaultRelayPreviewUrl(savedWebState?.draft, baseServerUrl),
+    [baseServerUrl, savedWebState?.draft, savedWebState?.url],
+  );
   const initialWebUrl =
-    savedWebState?.isUserControlled && savedWebState.url ? savedWebState.url : defaultWebPreviewUrl;
+    savedWebState?.isUserControlled && savedWebState.url && !shouldUseDefaultWebPreviewUrl
+      ? savedWebState.url
+      : defaultWebPreviewUrl;
   const initialWebUrlDraft =
-    savedWebState?.isUserControlled && savedWebState.draft ? savedWebState.draft : initialWebUrl;
+    savedWebState?.isUserControlled && savedWebState.draft && !shouldUseDefaultWebPreviewUrl
+      ? savedWebState.draft
+      : initialWebUrl;
   const webViewRef = useRef<WebView>(null);
   const sourceUrlRef = useRef(initialWebUrl);
   const [webUrlDraft, setWebUrlDraft] = useState(initialWebUrlDraft);
@@ -55,21 +69,33 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
   });
 
   useEffect(() => {
-    if (savedWebState?.isUserControlled) {
+    if (savedWebState?.isUserControlled && !shouldUseDefaultWebPreviewUrl) {
       return;
     }
 
     setWebUrlDraft(defaultWebPreviewUrl);
     setWebUrl(defaultWebPreviewUrl);
     sourceUrlRef.current = defaultWebPreviewUrl;
-  }, [defaultWebPreviewUrl, savedWebState?.isUserControlled]);
+    if (shouldUseDefaultWebPreviewUrl) {
+      updateWorkspacePreviewWebState(workspacePath, {
+        draft: defaultWebPreviewUrl,
+        isUserControlled: false,
+        url: defaultWebPreviewUrl,
+      });
+    }
+  }, [
+    defaultWebPreviewUrl,
+    savedWebState?.isUserControlled,
+    shouldUseDefaultWebPreviewUrl,
+    workspacePath,
+  ]);
 
   useEffect(() => {
     setWebError(null);
   }, [webReloadKey, webUrl]);
 
   function commitWebUrl() {
-    const normalized = normalizePreviewUrl(webUrlDraft, defaultWebPreviewUrl);
+    const normalized = normalizePreviewUrl(webUrlDraft, defaultWebPreviewUrl, baseServerUrl);
     setWebUrlDraft(normalized);
     setWebUrl(normalized);
     sourceUrlRef.current = normalized;
@@ -136,7 +162,7 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
             });
           }}
           onSubmitEditing={commitWebUrl}
-          placeholder="http://localhost:3000"
+          placeholder="http://localhost:30000"
           placeholderTextColor="#7A8493"
           returnKeyType="go"
           style={styles.urlInput}
@@ -172,7 +198,7 @@ export const WebWorkspacePreviewTab = memo(function WebWorkspacePreviewTab({
           pullToRefreshEnabled
           refreshControlLightMode={false}
           renderError={() => <View style={styles.webViewErrorBlank} />}
-          source={{ uri: webUrl }}
+          source={{ uri: webUrl, headers: codexRelayWebPreviewRequestHeaders(webUrl) }}
           startInLoadingState
           style={styles.webView}
         />
@@ -277,22 +303,17 @@ function WebControlButton({
 }
 
 function guessWebPreviewUrl(serverUrl: string) {
-  try {
-    const parsed = new URL(serverUrl);
-    parsed.port = "3000";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return serverUrl.replace(/\/$/, "");
-  }
+  return serverUrl ? resolveCodexRelayWebPreviewUrl(30000) : serverUrl.replace(/\/$/, "");
 }
 
-function normalizePreviewUrl(value: string, fallbackUrl: string) {
+function normalizePreviewUrl(value: string, fallbackUrl: string, relayServerUrl?: string) {
   const trimmed = value.trim();
   if (!trimmed) {
     return fallbackUrl;
   }
 
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const normalized = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  return isStaleDefaultRelayPreviewUrl(normalized, relayServerUrl) ? fallbackUrl : normalized;
 }
 
 function webPreviewHostLabel(value: string) {
@@ -300,6 +321,35 @@ function webPreviewHostLabel(value: string) {
     return new URL(normalizePreviewUrl(value, value)).host || value;
   } catch {
     return value.trim() || "Preview";
+  }
+}
+
+function isStaleDefaultRelayPreviewUrl(
+  value: string | undefined,
+  relayServerUrl: string | undefined,
+) {
+  if (!value || !relayServerUrl) {
+    return false;
+  }
+
+  try {
+    const parsedValue = new URL(value);
+    const parsedRelay = new URL(relayServerUrl);
+    if (parsedValue.protocol !== parsedRelay.protocol || parsedValue.host !== parsedRelay.host) {
+      return false;
+    }
+
+    if (
+      (parsedValue.pathname === "" || parsedValue.pathname === "/") &&
+      !parsedValue.search &&
+      !parsedValue.hash
+    ) {
+      return true;
+    }
+
+    return /^\/v1\/workspace\/web-preview\/(?:3000|3001)\/?$/.test(parsedValue.pathname);
+  } catch {
+    return false;
   }
 }
 

@@ -892,6 +892,45 @@ describe("Codex Relay server routes", () => {
     expect(insecurePairing.status).toBe(400);
   });
 
+  it("proxies workspace web preview traffic through the relay", async () => {
+    const previousPorts = process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
+    const originalFetch = globalThis.fetch;
+    try {
+      const port = 30000;
+      process.env.CODEX_RELAY_WEB_PREVIEW_PORTS = String(port);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: RequestInfo | URL) => {
+          const url = input.toString();
+          if (url === `http://127.0.0.1:${port}/app.js`) {
+            return new Response('fetch("/api/ping");', {
+              headers: { "content-type": "application/javascript" },
+            });
+          }
+          return new Response('<!doctype html><script type="module" src="/app.js"></script>', {
+            headers: { "content-type": "text/html" },
+          });
+        }),
+      );
+      const app = createApp({ codex: createMockCodex() });
+
+      const page = await app.request(`/v1/workspace/web-preview/${port}/`);
+      expect(page.status).toBe(200);
+      expect(await page.text()).toContain(`/v1/workspace/web-preview/${port}/app.js`);
+
+      const script = await app.request(`/v1/workspace/web-preview/${port}/app.js`);
+      expect(script.status).toBe(200);
+      expect(await script.text()).toContain(`/v1/workspace/web-preview/${port}/api/ping`);
+    } finally {
+      if (previousPorts === undefined) {
+        delete process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
+      } else {
+        process.env.CODEX_RELAY_WEB_PREVIEW_PORTS = previousPorts;
+      }
+      vi.stubGlobal("fetch", originalFetch);
+    }
+  });
+
   it("rejects expired client tokens", async () => {
     const sessions = await createTursoPairingSessionStore(":memory:");
     await sessions.createSession("expired-client-token", { expiresAt: Date.now() - 1 });

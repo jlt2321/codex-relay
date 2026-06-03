@@ -8,6 +8,8 @@
     "start:go": "expo start --go",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
+    "dev:workspace-code-editor": "vite --config vite.workspace-code-editor.config.ts",
+    "dev:workspace-ssh-terminal": "vite --config vite.workspace-ssh-terminal.config.ts",
     "build:workspace-code-editor": "vite build --config vite.workspace-code-editor.config.ts",
     "build:workspace-ssh-terminal": "vite build --config vite.workspace-ssh-terminal.config.ts",
     "ios": "expo run:ios",

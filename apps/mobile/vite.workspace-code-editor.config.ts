@@ -45,4 +45,9 @@ export default defineConfig({
   ],
   publicDir: false,
   root: "./web/workspace-code-editor",
+  server: {
+    host: "127.0.0.1",
+    port: 30000,
+    strictPort: true,
+  },
 });

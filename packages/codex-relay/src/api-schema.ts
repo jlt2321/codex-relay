@@ -965,6 +965,7 @@ export const apiPaths = {
   skills: "/v1/skills",
   workspaceFiles: "/v1/workspace/files",
   workspaceFileContent: "/v1/workspace/file",
+  workspaceWebPreviewProxy: "/v1/workspace/web-preview",
   workspaceDirectories: "/v1/workspace-directories",
   workspaceChanges: "/v1/workspace/changes",
   workspaceCheckout: "/v1/workspace/checkout",

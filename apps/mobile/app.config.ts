@@ -15,6 +15,7 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
       infoPlist: {
         NSAppTransportSecurity: {
           NSAllowsArbitraryLoads: true,
+          NSAllowsArbitraryLoadsInWebContent: true,
           NSAllowsLocalNetworking: true,
         },
         ITSAppUsesNonExemptEncryption: false,

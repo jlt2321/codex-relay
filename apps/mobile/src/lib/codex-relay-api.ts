@@ -197,6 +197,40 @@ export function codexRelayImageRequestHeaders() {
   return headers;
 }
 
+export function resolveCodexRelayWebPreviewUrl(port = 30000) {
+  const normalizedPort = Number.isInteger(port) && port > 0 && port < 65536 ? port : 30000;
+  return `${getCodexRelayServerUrl()}${apiPaths.workspaceWebPreviewProxy}/${normalizedPort}/`;
+}
+
+export function codexRelayWebPreviewRequestHeaders(url: string) {
+  if (!isCodexRelayWebPreviewUrl(url)) {
+    return undefined;
+  }
+
+  const headers: Record<string, string> = {
+    "x-codex-relay-client-session-id": getClientSessionId(),
+  };
+  const clientToken = storage.getString(clientTokenStorageKey);
+  if (clientToken) {
+    headers.authorization = `Bearer ${clientToken}`;
+  }
+  return headers;
+}
+
+function isCodexRelayWebPreviewUrl(url: string) {
+  try {
+    const parsedUrl = new URL(url);
+    const parsedServer = new URL(getCodexRelayServerUrl());
+    return (
+      parsedUrl.protocol === parsedServer.protocol &&
+      parsedUrl.host === parsedServer.host &&
+      parsedUrl.pathname.startsWith(`${apiPaths.workspaceWebPreviewProxy}/`)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function signOutCodexRelaySession() {
   clearClientSession();
 }

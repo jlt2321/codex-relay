@@ -4,7 +4,9 @@ set -euo pipefail
 VPS_IP="${JLT_RELAY_VPS_IP:-43.143.114.214}"
 PUBLIC_URL="${JLT_RELAY_PUBLIC_URL:-http://43.143.114.214:8788}"
 LOCAL_PORT="${JLT_RELAY_LOCAL_PORT:-8787}"
-WORKSPACE_PATH="${JLT_RELAY_WORKSPACE_PATH:-/Users/mormontjiang/Documents/workspace/work-assistant}"
+RELAY_PROJECT_PATH="${JLT_RELAY_PROJECT_PATH:-/Users/mormontjiang/Documents/workspace/codex-relay-private}"
+WORKSPACE_PATH="${JLT_RELAY_WORKSPACE_PATH:-$RELAY_PROJECT_PATH}"
+RELAY_CLI_PATH="${JLT_RELAY_CLI_PATH:-$RELAY_PROJECT_PATH/packages/codex-relay/dist/cli.js}"
 FRPC_PLIST="${JLT_RELAY_FRPC_PLIST:-/Users/mormontjiang/Library/LaunchAgents/com.jlt.codex-relay.frpc.plist}"
 TMUX_SESSION="${JLT_RELAY_TMUX_SESSION:-jlt-relay-local}"
 
@@ -53,10 +55,13 @@ ensure_frpc() {
 }
 
 ensure_relay() {
+  log "Building local codex-relay package."
+  pnpm --dir "$RELAY_PROJECT_PATH" --filter codex-relay build >/dev/null
+
   log "Restarting codex-relay in tmux session $TMUX_SESSION."
   tmux kill-session -t "$TMUX_SESSION" >/dev/null 2>&1 || true
   tmux new-session -d -s "$TMUX_SESSION" \
-    "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' caffeinate -ims npx --yes codex-relay@latest"
+    "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' caffeinate -ims node '$RELAY_CLI_PATH'"
 }
 
 verify() {

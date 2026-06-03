@@ -89,7 +89,7 @@ import {
   type Status,
   type StatusEntry,
 } from "es-git";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { cors } from "hono/cors";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -155,7 +155,8 @@ const knownCollaborationModeNames = "Default and Plan";
 const collaborationModeTemplates = Object.fromEntries(
   collaborationModeTemplateNames.map((name) => [name, readCollaborationModeTemplate(name)]),
 ) as Record<(typeof collaborationModeTemplateNames)[number], string>;
-const defaultWebPreviewPorts = [3000, 3001, 5173, 4173, 8080, 19006];
+const defaultWebPreviewPorts = [30000, 5173, 4173, 8080, 19006];
+const webPreviewSessionCookieName = "jlt_relay_web_preview_token";
 
 type AppOptions = {
   appServer?: CodexAppServerClient | null;
@@ -349,6 +350,13 @@ export function createApp(options: AppOptions = {}) {
       ? await options.pairing.sessions.getValidSession(tokenHash, Date.now())
       : undefined;
     if (!tokenHash || !validSession) {
+      if (
+        isWebPreviewProxyPath(c.req.path) &&
+        (await hasValidWebPreviewCookie(c, options.pairing))
+      ) {
+        await next();
+        return;
+      }
       return c.json(apiError("unauthorized", "Pair this device with the Codex Relay server."), 401);
     }
     if (options.pairing.serverIdentity && !secureSessionsByTokenHash.has(tokenHash)) {
@@ -589,6 +597,13 @@ export function createApp(options: AppOptions = {}) {
 
     return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
   });
+
+  app.all(`${apiPaths.workspaceWebPreviewProxy}/:port`, (c) =>
+    proxyWorkspaceWebPreview(c, options.pairing),
+  );
+  app.all(`${apiPaths.workspaceWebPreviewProxy}/:port/*`, (c) =>
+    proxyWorkspaceWebPreview(c, options.pairing),
+  );
 
   app.patch(apiPaths.preferences, async (c) => {
     const parsed = await parseRequestJson(
@@ -5048,6 +5063,198 @@ function webPreviewCandidatePorts() {
     .map((value) => Number(value.trim()))
     .filter((port) => Number.isInteger(port) && port > 0 && port < 65536);
   return ports.length > 0 ? ports : defaultWebPreviewPorts;
+}
+
+async function proxyWorkspaceWebPreview(c: Context, pairing: PairingOptions | undefined) {
+  const port = normalizeWebPreviewPort(c.req.param("port"));
+  if (!port) {
+    return c.json(
+      apiError("invalid_web_preview_port", "This web preview port is not allowed."),
+      403,
+    );
+  }
+
+  const rawRequestUrl = new URL(c.req.url);
+  const targetPath = webPreviewTargetPath(rawRequestUrl.pathname, port);
+  const targetUrl = new URL(`http://127.0.0.1:${port}`);
+  targetUrl.pathname = targetPath;
+  targetUrl.search = rawRequestUrl.search;
+
+  try {
+    const method = c.req.method.toUpperCase();
+    const init: RequestInit & { duplex?: "half" } = {
+      headers: webPreviewProxyRequestHeaders(c, targetUrl),
+      method,
+      redirect: "follow",
+    };
+    if (method !== "GET" && method !== "HEAD") {
+      init.body = await c.req.arrayBuffer();
+      init.duplex = "half";
+    }
+
+    const response = await fetch(targetUrl, init);
+    const headers = webPreviewProxyResponseHeaders(response.headers);
+    setWebPreviewSessionCookie(headers, c, pairing);
+
+    const contentType = response.headers.get("content-type") ?? "";
+    if (shouldRewriteWebPreviewResponse(contentType)) {
+      const text = await response.text();
+      return new Response(rewriteWebPreviewText(text, port), {
+        headers,
+        status: response.status,
+        statusText: response.statusText,
+      });
+    }
+
+    return new Response(response.body, {
+      headers,
+      status: response.status,
+      statusText: response.statusText,
+    });
+  } catch (error) {
+    return c.json(apiError("web_preview_unavailable", errorMessage(error)), 502);
+  }
+}
+
+function normalizeWebPreviewPort(value: string | undefined) {
+  const port = Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port >= 65536) {
+    return undefined;
+  }
+  return webPreviewCandidatePorts().includes(port) ? port : undefined;
+}
+
+function webPreviewTargetPath(requestPath: string, port: number) {
+  const proxyPrefix = `${apiPaths.workspaceWebPreviewProxy}/${port}`;
+  if (!requestPath.startsWith(proxyPrefix)) {
+    return "/";
+  }
+
+  const targetPath = requestPath.slice(proxyPrefix.length);
+  return targetPath.startsWith("/") ? targetPath : `/${targetPath}`;
+}
+
+function isWebPreviewProxyPath(path: string) {
+  return (
+    path === apiPaths.workspaceWebPreviewProxy ||
+    path.startsWith(`${apiPaths.workspaceWebPreviewProxy}/`)
+  );
+}
+
+async function hasValidWebPreviewCookie(c: Context, pairing: PairingOptions) {
+  const token = parseCookie(c.req.header("cookie"), webPreviewSessionCookieName);
+  if (!token) {
+    return false;
+  }
+
+  const tokenHash = pairing.hashClientToken(token);
+  const session = await pairing.sessions.getValidSession(tokenHash, Date.now());
+  return Boolean(session);
+}
+
+function parseCookie(cookieHeader: string | undefined, name: string) {
+  if (!cookieHeader) {
+    return undefined;
+  }
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValueParts] = part.trim().split("=");
+    if (rawKey !== name) {
+      continue;
+    }
+
+    const rawValue = rawValueParts.join("=");
+    try {
+      return decodeURIComponent(rawValue);
+    } catch {
+      return rawValue;
+    }
+  }
+  return undefined;
+}
+
+function webPreviewProxyRequestHeaders(c: Context, targetUrl: URL) {
+  const headers = new Headers(c.req.raw.headers);
+  for (const name of [
+    "authorization",
+    "cookie",
+    "host",
+    "x-codex-relay-client-session-id",
+    "content-length",
+  ]) {
+    headers.delete(name);
+  }
+
+  const sourceUrl = new URL(c.req.url);
+  headers.set("x-forwarded-host", sourceUrl.host);
+  headers.set("x-forwarded-proto", sourceUrl.protocol.replace(/:$/, ""));
+  headers.set("x-forwarded-for", c.req.header("x-forwarded-for") ?? "127.0.0.1");
+  headers.set("x-forwarded-port", targetUrl.port);
+  return headers;
+}
+
+function webPreviewProxyResponseHeaders(upstreamHeaders: Headers) {
+  const headers = new Headers(upstreamHeaders);
+  for (const name of [
+    "content-encoding",
+    "content-length",
+    "set-cookie",
+    "transfer-encoding",
+    "x-frame-options",
+  ]) {
+    headers.delete(name);
+  }
+  return headers;
+}
+
+function setWebPreviewSessionCookie(
+  headers: Headers,
+  c: Context,
+  pairing: PairingOptions | undefined,
+) {
+  if (!pairing) {
+    return;
+  }
+
+  const token =
+    parseBearerToken(c.req.header("authorization")) ??
+    parseCookie(c.req.header("cookie"), webPreviewSessionCookieName);
+  if (!token) {
+    return;
+  }
+
+  headers.append(
+    "set-cookie",
+    `${webPreviewSessionCookieName}=${encodeURIComponent(token)}; Path=${
+      apiPaths.workspaceWebPreviewProxy
+    }; HttpOnly; SameSite=Lax`,
+  );
+}
+
+function shouldRewriteWebPreviewResponse(contentType: string) {
+  return (
+    contentType.includes("text/html") ||
+    contentType.includes("text/css") ||
+    contentType.includes("javascript") ||
+    contentType.includes("application/ecmascript")
+  );
+}
+
+function rewriteWebPreviewText(text: string, port: number) {
+  const proxyRoot = `${apiPaths.workspaceWebPreviewProxy}/${port}`;
+  const absoluteRootPattern = `(?!\\/|${escapeRegExp(proxyRoot.slice(1))}\\/|v1\\/workspace\\/web-preview\\/)`;
+
+  return text
+    .replace(
+      new RegExp(`\\b(src|href|action)=("|')\\/${absoluteRootPattern}`, "gi"),
+      `$1=$2${proxyRoot}/`,
+    )
+    .replace(new RegExp(`url\\(\\s*(["']?)\\/${absoluteRootPattern}`, "gi"), `url($1${proxyRoot}/`)
+    .replace(new RegExp(`(["'\`])\\/${absoluteRootPattern}`, "g"), `$1${proxyRoot}/`);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function readCollaborationModeTemplate(name: (typeof collaborationModeTemplateNames)[number]) {
