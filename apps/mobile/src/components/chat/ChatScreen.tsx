@@ -121,6 +121,10 @@ import {
   type LocalPromptAttachment,
   type QueuedComposerPrompt,
 } from "@/state/chat-store";
+import {
+  clearPendingWorkspacePreviewRequest,
+  pendingWorkspacePreviewStore$,
+} from "@/state/pending-workspace-preview-store";
 import { addWorkspacePreviewTab } from "@/state/workspace-preview-store";
 
 import { ChatControls } from "./ChatControls";
@@ -177,6 +181,9 @@ export function ChatScreen() {
   const drawerNavigation = useNavigation<{
     openDrawer?: () => void;
   }>();
+  const pendingWorkspacePreviewRequest = useSelector(() =>
+    pendingWorkspacePreviewStore$.request.get(),
+  );
   const queryClient = useQueryClient();
   const checkoutWorkspaceBranchMutation = useMutation({
     mutationFn: (body: Parameters<typeof checkoutWorkspaceBranchServerState>[1]) =>
@@ -940,6 +947,19 @@ export function ChatScreen() {
     },
     [activeWorkspacePath, openWorkspacePreview],
   );
+
+  useEffect(() => {
+    if (!pendingWorkspacePreviewRequest) {
+      return;
+    }
+
+    clearPendingWorkspacePreviewRequest(pendingWorkspacePreviewRequest.requestId);
+    openWorkspacePreview({
+      protocol: WORKSPACE_PREVIEW_OPEN_PROTOCOL,
+      tab: pendingWorkspacePreviewRequest.tab,
+      workspacePath: pendingWorkspacePreviewRequest.workspacePath ?? activeWorkspacePath,
+    });
+  }, [activeWorkspacePath, openWorkspacePreview, pendingWorkspacePreviewRequest]);
 
   const closeWorkspacePreview = useCallback(() => {
     hapticSelection();

@@ -8,10 +8,11 @@ import { Alert, Linking, Pressable, ScrollView, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
+import type { WorkspacePreviewTab } from "codex-relay/api-schema";
 
 import { FaGithub } from "@/assets/icons/fa";
 import { ThemedText } from "@/components/themed-text";
-import { Icon } from "@/components/ui/icon";
+import { Icon, type AppIconName } from "@/components/ui/icon";
 import {
   codexRelayRepositoryLabel,
   codexRelayRepositoryUrl,
@@ -41,6 +42,7 @@ import {
   serverStateQueryFns,
   setStatusState,
 } from "@/lib/server-state";
+import { requestWorkspacePreviewOpen } from "@/state/pending-workspace-preview-store";
 import { chatStore$, resetChatSessionState, setConnection, setServerUrl } from "@/state/chat-store";
 
 const hotUpdaterBaseUrl = process.env.EXPO_PUBLIC_HOT_UPDATER_BASE_URL?.trim();
@@ -50,9 +52,15 @@ export default function SettingsScreen() {
   const queryClient = useQueryClient();
   const connection = useSelector(() => chatStore$.connection.get());
   const serverUrl = useSelector(() => chatStore$.serverUrl.get());
+  const workspacePath = useSelector(() => chatStore$.workspacePath.get());
   const statusQuery = useQuery({
     queryKey: serverStateKeys.status(),
     queryFn: serverStateQueryFns.status,
+    enabled: false,
+  });
+  const versionQuery = useQuery({
+    queryKey: serverStateKeys.version(),
+    queryFn: serverStateQueryFns.version,
     enabled: false,
   });
   const rateLimitsQuery = useQuery({
@@ -62,6 +70,33 @@ export default function SettingsScreen() {
   });
   const machineName = statusQuery.data?.machineName;
   const computerName = machineName ?? connectedComputerName(serverUrl);
+  const activeWorkspacePath = statusQuery.data?.workspacePath ?? workspacePath;
+  const relayPackageVersion = versionQuery.data?.packageVersion ?? "Unknown";
+  const relayAccess = relayAccessProfile(serverUrl);
+  const statusRows = [
+    { label: "Public URL", value: compactServer(serverUrl) },
+    { label: "Access", value: relayAccess.label },
+    { label: "Workspace", value: compactPath(activeWorkspacePath ?? "Not reported") },
+    { label: "Relay", value: `codex-relay ${relayPackageVersion}` },
+    {
+      label: "Codex SDK",
+      value:
+        statusQuery.data?.sdkAvailable === undefined
+          ? "Unknown"
+          : statusQuery.data.sdkAvailable
+            ? "Available"
+            : "Unavailable",
+    },
+    {
+      label: "App server",
+      value:
+        statusQuery.data?.appServerAvailable === undefined
+          ? "Unknown"
+          : statusQuery.data.appServerAvailable
+            ? "Available"
+            : "Unavailable",
+    },
+  ];
   const [appVersion] = useState(() => HotUpdater.getAppVersion() ?? "1.0.0");
   const [appliedBundleSuffix] = useState(appliedHotUpdateBundleSuffix);
   const hotUpdaterTapCountRef = useRef(0);
@@ -143,6 +178,14 @@ export default function SettingsScreen() {
     setServerUrlCandidates(getCodexRelayServerUrlCandidates());
   }, [serverUrl]);
 
+  useEffect(() => {
+    if (connection === "connected") {
+      void refreshRelayStatus({ silent: true });
+    }
+    // Only refresh when the screen mounts with an active connection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   function closeSettings() {
     hapticSelection();
     if (router.canGoBack()) {
@@ -188,6 +231,38 @@ export default function SettingsScreen() {
     } finally {
       setSwitchingServerUrl(undefined);
     }
+  }
+
+  async function refreshRelayStatus(options: { silent?: boolean } = {}) {
+    if (!options.silent) {
+      hapticSelection();
+    }
+    setConnection("checking");
+
+    try {
+      const [status] = await Promise.all([
+        fetchStatusState(queryClient),
+        queryClient.fetchQuery({
+          queryKey: serverStateKeys.version(),
+          queryFn: serverStateQueryFns.version,
+        }),
+        fetchRateLimitsState(queryClient).catch(() => undefined),
+      ]);
+      setStatusState(queryClient, status);
+      setConnection("connected");
+    } catch (caught) {
+      const message = settingsErrorMessage(caught);
+      setConnection("offline", message);
+      if (!options.silent) {
+        Alert.alert("Relay unavailable", message);
+      }
+    }
+  }
+
+  function openWorkspaceTool(tab: Exclude<WorkspacePreviewTab, "markdown">) {
+    hapticSelection();
+    requestWorkspacePreviewOpen(tab, activeWorkspacePath);
+    router.replace("/");
   }
 
   async function applyAppUpdate() {
@@ -308,6 +383,91 @@ export default function SettingsScreen() {
                 </View>
                 <Icon name="externalLink" size={15} tintColor={Colors.dark.textSecondary} />
               </Pressable>
+            </Animated.View>
+          </Animated.View>
+
+          <Animated.View layout={settingsLayoutTransition} style={styles.section}>
+            <View style={styles.sectionHeaderRow}>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
+                Relay Status
+              </ThemedText>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Refresh relay status"
+                onPress={() => void refreshRelayStatus()}
+                style={({ pressed }) => [styles.sectionHeaderButton, pressed && styles.pressed]}
+              >
+                <Icon name="refresh" size={12} tintColor={Colors.dark.textSecondary} />
+                <ThemedText type="code" style={styles.sectionHeaderButtonText}>
+                  CHECK
+                </ThemedText>
+              </Pressable>
+            </View>
+            <Animated.View layout={settingsLayoutTransition} style={styles.statusPanel}>
+              <View style={styles.statusHero}>
+                <View style={[styles.statusHeroIcon, { borderColor: relayAccess.color }]}>
+                  <Icon name={relayAccess.icon} size={18} tintColor={relayAccess.color} />
+                </View>
+                <View style={styles.statusHeroCopy}>
+                  <ThemedText type="smallBold" style={styles.statusHeroTitle}>
+                    {relayAccess.title}
+                  </ThemedText>
+                  <ThemedText
+                    type="small"
+                    themeColor="textSecondary"
+                    style={styles.statusHeroSubtitle}
+                  >
+                    {relayAccess.subtitle}
+                  </ThemedText>
+                </View>
+                <View style={styles.statusHeroBadge}>
+                  <ThemedText type="code" style={styles.statusHeroBadgeText}>
+                    {connectionLabel(connection)}
+                  </ThemedText>
+                </View>
+              </View>
+              <View style={styles.statusGrid}>
+                {statusRows.map((row) => (
+                  <StatusTile key={row.label} label={row.label} value={row.value} />
+                ))}
+              </View>
+            </Animated.View>
+          </Animated.View>
+
+          <Animated.View layout={settingsLayoutTransition} style={styles.section}>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
+              Quick Actions
+            </ThemedText>
+            <Animated.View layout={settingsLayoutTransition} style={styles.quickActionPanel}>
+              <QuickActionRow
+                icon="branch"
+                title="Git preview"
+                subtitle="Review current diff before committing."
+                badge="READ"
+                onPress={() => openWorkspaceTool("git")}
+              />
+              <QuickActionRow
+                icon="folder"
+                title="Files"
+                subtitle="Browse workspace files from the phone."
+                badge="READ"
+                onPress={() => openWorkspaceTool("files")}
+              />
+              <QuickActionRow
+                icon="web"
+                title="Web preview"
+                subtitle="Open a detected or manually entered local web URL."
+                badge="VIEW"
+                onPress={() => openWorkspaceTool("web")}
+              />
+              <QuickActionRow
+                icon="terminal"
+                title="SSH terminal"
+                subtitle="Opens a terminal on the Mac workspace; use only when needed."
+                badge="HIGH RISK"
+                tone="warning"
+                onPress={() => openWorkspaceTool("ssh")}
+              />
             </Animated.View>
           </Animated.View>
 
@@ -712,6 +872,76 @@ function InfoLine({
   );
 }
 
+function StatusTile({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.statusTile}>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.statusTileLabel}>
+        {label}
+      </ThemedText>
+      <ThemedText type="code" style={styles.statusTileValue} numberOfLines={2}>
+        {value}
+      </ThemedText>
+    </View>
+  );
+}
+
+function QuickActionRow({
+  badge,
+  icon,
+  onPress,
+  subtitle,
+  title,
+  tone = "default",
+}: {
+  badge: string;
+  icon: AppIconName;
+  onPress: () => void;
+  subtitle: string;
+  title: string;
+  tone?: "default" | "warning";
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={({ pressed }) => [
+        styles.quickActionRow,
+        tone === "warning" && styles.quickActionRowWarning,
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={[styles.quickActionIcon, tone === "warning" && styles.quickActionIconWarning]}>
+        <Icon name={icon} size={17} tintColor={tone === "warning" ? "#F2B84B" : Colors.dark.text} />
+      </View>
+      <View style={styles.quickActionCopy}>
+        <ThemedText type="smallBold" style={styles.quickActionTitle}>
+          {title}
+        </ThemedText>
+        <ThemedText
+          type="small"
+          themeColor="textSecondary"
+          style={styles.quickActionSubtitle}
+          numberOfLines={2}
+        >
+          {subtitle}
+        </ThemedText>
+      </View>
+      <View style={[styles.quickActionBadge, tone === "warning" && styles.quickActionBadgeWarning]}>
+        <ThemedText
+          type="code"
+          style={[
+            styles.quickActionBadgeText,
+            tone === "warning" && styles.quickActionBadgeTextWarning,
+          ]}
+        >
+          {badge}
+        </ThemedText>
+      </View>
+    </Pressable>
+  );
+}
+
 function connectedComputerName(serverUrl: string) {
   if (!serverUrl) {
     return "No computer paired";
@@ -726,6 +956,71 @@ function connectedComputerName(serverUrl: string) {
 
 function compactServer(serverUrl: string) {
   return serverUrl ? serverUrl.replace(/^https?:\/\//, "") : "Not paired";
+}
+
+function compactPath(path: string) {
+  const homePrefix = "/Users/mormontjiang/";
+  if (path.startsWith(homePrefix)) {
+    return `~/${path.slice(homePrefix.length)}`;
+  }
+  return path;
+}
+
+function relayAccessProfile(serverUrl: string): {
+  color: string;
+  icon: AppIconName;
+  label: string;
+  subtitle: string;
+  title: string;
+} {
+  try {
+    const parsed = new URL(serverUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (host === "43.143.114.214") {
+      return {
+        color: "#8CC7FF",
+        icon: "web",
+        label: "VPS public",
+        subtitle: "Traffic enters through the VPS reverse proxy and FRP tunnel.",
+        title: "VPS tunnel active",
+      };
+    }
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") {
+      return {
+        color: "#93E1B6",
+        icon: "workspace",
+        label: "Localhost",
+        subtitle: "This address works only on the Mac running the relay.",
+        title: "Local relay",
+      };
+    }
+    if (host.endsWith(".ts.net") || host.endsWith(".beta.tailscale.net")) {
+      return {
+        color: "#93E1B6",
+        icon: "permissions",
+        label: "Tailscale",
+        subtitle: "Traffic uses a private mesh address.",
+        title: "Private network",
+      };
+    }
+    if (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.")) {
+      return {
+        color: "#93E1B6",
+        icon: "workspace",
+        label: "LAN",
+        subtitle: "Traffic uses the current local network.",
+        title: "Local network",
+      };
+    }
+  } catch {}
+
+  return {
+    color: "#F2B84B",
+    icon: "warning",
+    label: "Custom",
+    subtitle: "Confirm this address is the intended relay endpoint.",
+    title: "Custom endpoint",
+  };
 }
 
 function connectionLabel(connection: "checking" | "connected" | "offline") {
@@ -850,6 +1145,185 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
     opacity: 0.68,
+  },
+  sectionHeaderRow: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: Spacing.two,
+    minHeight: 24,
+  },
+  sectionHeaderButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 6,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 5,
+    minHeight: 24,
+    paddingHorizontal: 8,
+  },
+  sectionHeaderButtonText: {
+    color: Colors.dark.textSecondary,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  statusPanel: {
+    backgroundColor: Colors.dark.backgroundElement,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: Spacing.three,
+    padding: Spacing.three,
+  },
+  statusHero: {
+    alignItems: "center",
+    flexDirection: "row",
+    gap: Spacing.two,
+  },
+  statusHeroIcon: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.05)",
+    borderRadius: 18,
+    borderWidth: 1,
+    flexShrink: 0,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  statusHeroCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  statusHeroTitle: {
+    fontSize: 14,
+    lineHeight: 19,
+  },
+  statusHeroSubtitle: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  statusHeroBadge: {
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 6,
+    borderWidth: 1,
+    flexShrink: 0,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+  },
+  statusHeroBadgeText: {
+    color: Colors.dark.textSecondary,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  statusGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  statusTile: {
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 7,
+    borderWidth: 1,
+    flexBasis: "48%",
+    flexGrow: 1,
+    gap: 3,
+    minHeight: 58,
+    minWidth: 128,
+    paddingHorizontal: 9,
+    paddingVertical: 8,
+  },
+  statusTileLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  statusTileValue: {
+    color: Colors.dark.text,
+    fontFamily: Fonts.monoMedium,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  quickActionPanel: {
+    backgroundColor: Colors.dark.backgroundElement,
+    borderColor: "rgba(255, 255, 255, 0.09)",
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 7,
+    padding: Spacing.two,
+  },
+  quickActionRow: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.04)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
+    borderRadius: 7,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: Spacing.two,
+    minHeight: 62,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  quickActionRowWarning: {
+    backgroundColor: "rgba(242, 184, 75, 0.08)",
+    borderColor: "rgba(242, 184, 75, 0.2)",
+  },
+  quickActionIcon: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    borderColor: "rgba(255, 255, 255, 0.1)",
+    borderRadius: 15,
+    borderWidth: 1,
+    flexShrink: 0,
+    height: 30,
+    justifyContent: "center",
+    width: 30,
+  },
+  quickActionIconWarning: {
+    backgroundColor: "rgba(242, 184, 75, 0.12)",
+    borderColor: "rgba(242, 184, 75, 0.22)",
+  },
+  quickActionCopy: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  quickActionTitle: {
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  quickActionSubtitle: {
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  quickActionBadge: {
+    alignItems: "center",
+    backgroundColor: "rgba(140, 199, 255, 0.08)",
+    borderColor: "rgba(140, 199, 255, 0.16)",
+    borderRadius: 6,
+    borderWidth: 1,
+    flexShrink: 0,
+    justifyContent: "center",
+    minWidth: 56,
+    paddingHorizontal: 7,
+    paddingVertical: 4,
+  },
+  quickActionBadgeWarning: {
+    backgroundColor: "rgba(242, 184, 75, 0.12)",
+    borderColor: "rgba(242, 184, 75, 0.24)",
+  },
+  quickActionBadgeText: {
+    color: "#8CC7FF",
+    fontFamily: Fonts.monoMedium,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  quickActionBadgeTextWarning: {
+    color: "#F2B84B",
   },
   projectLinkList: {
     backgroundColor: Colors.dark.backgroundElement,
