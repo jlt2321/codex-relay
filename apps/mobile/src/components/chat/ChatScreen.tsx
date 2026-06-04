@@ -127,7 +127,7 @@ import {
 } from "@/state/pending-workspace-preview-store";
 import { addWorkspacePreviewTab } from "@/state/workspace-preview-store";
 
-import { ChatControls } from "./ChatControls";
+import { ChatControlPickerSheet, ChatControls, type ChatControlPicker } from "./ChatControls";
 import { ChatShell } from "./ChatShell";
 import { ConnectionBanner } from "./ConnectionBanner";
 import { WorkspacePreviewSurface } from "./WorkspacePreviewSurface";
@@ -141,6 +141,7 @@ const CONNECTION_RETRY_MS = 2500;
 const STREAM_STALL_RECONNECT_MS = 45_000;
 const STREAM_WATCHDOG_INTERVAL_MS = 10_000;
 const SCANNER_TO_APPROVAL_SHEET_DELAY_MS = 450;
+const COMPOSER_CONTROL_PICKER_DELAY_MS = 280;
 const COPY_TOAST_VISIBLE_MS = 1800;
 const EMPTY_SKILLS: AgentSkill[] = [];
 const EMPTY_THREADS: ThreadSummary[] = [];
@@ -174,8 +175,14 @@ export function ChatScreen() {
   >(undefined);
   const [isHandlingScan, setHandlingScan] = useState(false);
   const [activePagerPage, setActivePagerPage] = useState(0);
+  const [activeComposerControlPicker, setActiveComposerControlPicker] = useState<
+    ChatControlPicker | undefined
+  >(undefined);
   const [scannerMessage, setScannerMessage] = useState("Point the camera at the connection QR.");
   const copyToastIdRef = useRef(0);
+  const composerControlPickerTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
   const [copyToast, setCopyToast] = useState<{ id: number } | undefined>(undefined);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const drawerNavigation = useNavigation<{
@@ -1023,6 +1030,9 @@ export function ChatScreen() {
     return () => {
       clearThreadStatusPoll();
       detachCurrentStream();
+      if (composerControlPickerTimeoutRef.current) {
+        clearTimeout(composerControlPickerTimeoutRef.current);
+      }
       isModernScannerOpenRef.current = false;
       void CameraView.dismissScanner().catch(() => undefined);
     };
@@ -1946,6 +1956,24 @@ export function ChatScreen() {
     hapticMediumImpact();
   }
 
+  function openComposerControlPicker(picker: ChatControlPicker) {
+    if (composerControlPickerTimeoutRef.current) {
+      clearTimeout(composerControlPickerTimeoutRef.current);
+    }
+    composerControlPickerTimeoutRef.current = setTimeout(() => {
+      composerControlPickerTimeoutRef.current = undefined;
+      setActiveComposerControlPicker(picker);
+    }, COMPOSER_CONTROL_PICKER_DELAY_MS);
+  }
+
+  function closeComposerControlPicker() {
+    if (composerControlPickerTimeoutRef.current) {
+      clearTimeout(composerControlPickerTimeoutRef.current);
+      composerControlPickerTimeoutRef.current = undefined;
+    }
+    setActiveComposerControlPicker(undefined);
+  }
+
   const showMessageCopiedToast = useCallback(() => {
     copyToastIdRef.current += 1;
     setCopyToast({ id: copyToastIdRef.current });
@@ -1981,9 +2009,10 @@ export function ChatScreen() {
             composerFocusRecoveryKey={connection}
             collaborationMode={collaborationMode}
             composerFocusRequestKey={composerFocusRequestKey}
-            composerFooter={
+            composerFooter={({ closeAddSheet }) => (
               <ChatControls
                 models={models}
+                presentation="menu"
                 runtimeMode={runtimeMode}
                 selectedReasoningEffort={selectedReasoningEffort}
                 selectedServiceTier={selectedServiceTier}
@@ -1992,8 +2021,12 @@ export function ChatScreen() {
                 onSelectedReasoningEffortChange={changeSelectedReasoningEffort}
                 onSelectedServiceTierChange={changeSelectedServiceTier}
                 onSelectedModelChange={changeSelectedModel}
+                onRequestPicker={(picker) => {
+                  closeAddSheet();
+                  openComposerControlPicker(picker);
+                }}
               />
-            }
+            )}
             contextWindowUsage={contextWindowUsage}
             inputNativeID={CHAT_INPUT_NATIVE_ID}
             isAttachingImage={isAttachingImages}
@@ -2068,6 +2101,19 @@ export function ChatScreen() {
           />
         </View>
       </PagerView>
+      <ChatControlPickerSheet
+        activePicker={activeComposerControlPicker}
+        models={models}
+        onClose={closeComposerControlPicker}
+        onRuntimeModeChange={changeRuntimeMode}
+        onSelectedModelChange={changeSelectedModel}
+        onSelectedReasoningEffortChange={changeSelectedReasoningEffort}
+        onSelectedServiceTierChange={changeSelectedServiceTier}
+        runtimeMode={runtimeMode}
+        selectedModel={selectedModel}
+        selectedReasoningEffort={selectedReasoningEffort}
+        selectedServiceTier={selectedServiceTier}
+      />
       {copyToast ? (
         <AppToast
           key={copyToast.id}

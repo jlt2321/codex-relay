@@ -11,6 +11,7 @@ import type {
 } from "codex-relay/api-schema";
 import { promptSkillMentionLabel, promptSkillMentionTextCandidates } from "codex-relay/api-schema";
 import { Image } from "expo-image";
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from "expo-speech-recognition";
 import {
   memo,
   useCallback,
@@ -22,7 +23,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { Pressable, TextInput, View, type LayoutChangeEvent } from "react-native";
+import { Alert, Pressable, TextInput, View, type LayoutChangeEvent } from "react-native";
 import {
   EnrichedMarkdownTextInput,
   type EnrichedMarkdownTextInputInstance,
@@ -69,6 +70,7 @@ const FILE_MENTION_INDICATOR = "@";
 const SKILL_MENTION_INDICATOR = "$";
 const DEFAULT_COMPOSER_PLACEHOLDER = "Ask Codex anything. Try $skills or @files.";
 const PLAN_COMPOSER_PLACEHOLDER = "Ask Codex for a plan. Try $skills or @files.";
+const SPEECH_RECOGNITION_LOCALE = "zh-CN";
 const SUGGESTION_ROW_ESTIMATED_SIZE = 44;
 const SUGGESTION_LIST_GAP = 2;
 const SUGGESTION_LIST_MAX_HEIGHT = 270;
@@ -81,6 +83,7 @@ const MENTION_INPUT_MARKDOWN_STYLE = {
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 type PlanDecision = "context" | "implement";
+type ChatComposerFooterRender = (actions: { closeAddSheet: () => void }) => ReactNode;
 
 type PanelDraftState = {
   inputRequest: {
@@ -248,7 +251,7 @@ export const ChatComposer = memo(function ChatComposer({
   contextWindowUsage?: ContextWindowUsage;
   disabled: boolean;
   disabledPlaceholder?: string;
-  footer?: ReactNode;
+  footer?: ReactNode | ChatComposerFooterRender;
   focusRequestKey?: number;
   focusRecoveryKey?: number | string;
   inputEditable?: boolean;
@@ -300,6 +303,8 @@ export const ChatComposer = memo(function ChatComposer({
   const [inputSelection, setInputSelection] = useState({ end: 0, start: 0 });
   const [fileMentionQuery, setFileMentionQuery] = useState<string | undefined>();
   const [skillMentionQuery, setSkillMentionQuery] = useState<string | undefined>();
+  const [isVoiceListening, setVoiceListening] = useState(false);
+  const [isVoiceStarting, setVoiceStarting] = useState(false);
   const planDraft = activePlanDraft(panelDraftState, planConfirmationId);
   const inputRequestDraft = activeInputRequestDraft(panelDraftState, pendingInputRequest?.id);
   const planDecision = planDraft.decision;
@@ -317,6 +322,7 @@ export const ChatComposer = memo(function ChatComposer({
   const skillMentionRangesRef = useRef<SkillMentionRange[]>([]);
   const nativeDraftRef = useRef(value);
   const nativeMarkdownRef = useRef(value);
+  const speechBaseMarkdownRef = useRef(value);
   const ignoredMarkdownChangeRef = useRef<string | undefined>(undefined);
   const ignoredMarkdownChangeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -328,6 +334,7 @@ export const ChatComposer = memo(function ChatComposer({
   const hasMessageContent =
     Boolean(value.trim()) || attachments.length > 0 || selectedSkills.length > 0;
   const isAttachBusy = isAttachingImage || isAttachLaunchPending;
+  const canUseVoiceInput = isInputEditable && !disabled && !isAttachBusy;
   const canSend = hasMessageContent && !disabled && !isAttachBusy;
   const canStop = isRunning && !hasMessageContent;
   const showSendButton = !isRunning || hasMessageContent;
@@ -372,6 +379,40 @@ export const ChatComposer = memo(function ChatComposer({
     !hasMessageContent,
   );
 
+  useSpeechRecognitionEvent("start", () => {
+    setVoiceStarting(false);
+    setVoiceListening(true);
+  });
+
+  useSpeechRecognitionEvent("end", () => {
+    setVoiceStarting(false);
+    setVoiceListening(false);
+  });
+
+  useSpeechRecognitionEvent("result", (event) => {
+    const transcript = event.results[0]?.transcript.trim();
+    if (!transcript) {
+      return;
+    }
+    const nextMarkdown = markdownWithAppendedSpeechTranscript(
+      speechBaseMarkdownRef.current,
+      transcript,
+    );
+    applyComposerMarkdown(nextMarkdown);
+    if (event.isFinal) {
+      speechBaseMarkdownRef.current = nextMarkdown;
+    }
+  });
+
+  useSpeechRecognitionEvent("error", (event) => {
+    setVoiceStarting(false);
+    setVoiceListening(false);
+    if (event.error === "aborted" || event.error === "no-speech") {
+      return;
+    }
+    Alert.alert("Voice input failed", speechRecognitionErrorMessage(event.message));
+  });
+
   useEffect(() => {
     return () => {
       if (attachLaunchTimeoutRef.current) {
@@ -383,6 +424,9 @@ export const ChatComposer = memo(function ChatComposer({
       if (focusRecoveryTimeoutRef.current) {
         clearTimeout(focusRecoveryTimeoutRef.current);
       }
+      try {
+        ExpoSpeechRecognitionModule.abort();
+      } catch {}
     };
   }, []);
 
@@ -478,6 +522,74 @@ export const ChatComposer = memo(function ChatComposer({
     inputRef.current?.blur();
     onKeyboardLayoutFrozenChange?.(false);
     void KeyboardController.dismiss().catch(() => undefined);
+  }
+
+  async function toggleVoiceInput() {
+    if (isVoiceListening || isVoiceStarting) {
+      hapticSelection();
+      try {
+        ExpoSpeechRecognitionModule.stop();
+      } catch (caught) {
+        setVoiceStarting(false);
+        setVoiceListening(false);
+        Alert.alert("Voice input failed", errorMessage(caught));
+      }
+      return;
+    }
+
+    if (!canUseVoiceInput) {
+      hapticWarning();
+      return;
+    }
+
+    hapticSelection();
+    try {
+      const permission = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert(
+          "Voice access needed",
+          permission.restricted
+            ? "Speech recognition is restricted in iOS settings or device management."
+            : "Allow microphone and speech recognition access to dictate messages.",
+        );
+        return;
+      }
+
+      speechBaseMarkdownRef.current = await currentInputMarkdown();
+      setVoiceStarting(true);
+      ExpoSpeechRecognitionModule.start({
+        continuous: false,
+        interimResults: true,
+        lang: SPEECH_RECOGNITION_LOCALE,
+      });
+    } catch (caught) {
+      setVoiceStarting(false);
+      setVoiceListening(false);
+      Alert.alert("Voice input failed", speechRecognitionErrorMessage(errorMessage(caught)));
+    }
+  }
+
+  function applyComposerMarkdown(markdown: string) {
+    const skillMentions = skillMentionsFromMarkdown(markdown, [...selectedSkills, ...skills]);
+    const nextFileRanges = fileMentionsFromMarkdown(markdown);
+    nativeMarkdownRef.current = markdown;
+    nativeDraftRef.current = markdownToPlainText(markdown);
+    skillMentionRangesRef.current = skillMentions.ranges;
+    fileMentionRangesRef.current = nextFileRanges;
+    if (
+      skillMentions.skills.length > 0 &&
+      !sameSkillSelection(selectedSkills, skillMentions.skills)
+    ) {
+      setComposerSkills(skillMentions.skills, composerThreadId);
+    }
+    setComposerDraft(markdown, composerThreadId);
+    ignoreNextProgrammaticMarkdownChange(markdown);
+    inputRef.current?.setValue(markdown);
+    const cursor = markdownToPlainText(markdown).length;
+    requestAnimationFrame(() => {
+      setInputSelection({ end: cursor, start: cursor });
+      inputRef.current?.setSelection(cursor, cursor);
+    });
   }
 
   function handleSendPress() {
@@ -941,6 +1053,8 @@ export const ChatComposer = memo(function ChatComposer({
     );
   }
 
+  const renderedFooter = typeof footer === "function" ? footer({ closeAddSheet }) : footer;
+
   return (
     <View style={styles.composerStack}>
       {shouldShowFileSuggestions ? (
@@ -1043,9 +1157,35 @@ export const ChatComposer = memo(function ChatComposer({
             >
               <Icon name="newThread" size={20} tintColor={theme.text} />
             </Button>
-            {footer ? <View style={styles.footerRow}>{footer}</View> : null}
           </View>
           <ContextUsageRing usage={contextWindowUsage} onPress={onRefreshUsageStatus} />
+          <Button
+            accessibilityLabel={
+              isVoiceListening || isVoiceStarting ? "Stop voice input" : "Start voice input"
+            }
+            accessibilityRole="button"
+            disabled={!canUseVoiceInput && !isVoiceListening && !isVoiceStarting}
+            onPress={() => void toggleVoiceInput()}
+            size="icon"
+            variant="ghost"
+            className="rounded-full size-9"
+            style={({ pressed }) => [
+              styles.voiceButton,
+              (isVoiceListening || isVoiceStarting) && styles.voiceButtonActive,
+              isVoiceStarting && styles.voiceButtonStarting,
+              !canUseVoiceInput &&
+                !isVoiceListening &&
+                !isVoiceStarting &&
+                styles.voiceButtonDisabled,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Icon
+              name="voice"
+              size={18}
+              tintColor={isVoiceListening || isVoiceStarting ? "#F87171" : theme.text}
+            />
+          </Button>
           {showSendButton ? (
             <Button
               accessibilityLabel={actionLabel}
@@ -1080,6 +1220,7 @@ export const ChatComposer = memo(function ChatComposer({
         </View>
       </Animated.View>
       <AppBottomSheet title="Add context" onClose={closeAddSheet} visible={isAddSheetOpen}>
+        {renderedFooter}
         <SheetActionRow
           accessibilityLabel="Add photos from library"
           icon="attach"
@@ -2603,6 +2744,25 @@ function sameSkillSelection(left: AgentSkill[], right: AgentSkill[]) {
   );
 }
 
+function markdownWithAppendedSpeechTranscript(baseMarkdown: string, transcript: string) {
+  const base = baseMarkdown.trimEnd();
+  if (!base) {
+    return transcript;
+  }
+  return `${base} ${transcript}`;
+}
+
+function speechRecognitionErrorMessage(message: string) {
+  if (message.toLowerCase().includes("native module")) {
+    return "Voice input requires reinstalling the iOS app so the native speech module is included.";
+  }
+  return message;
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 const styles = StyleSheet.create({
   composerStack: {
     position: "relative",
@@ -3081,6 +3241,26 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: "rgba(243, 244, 246, 0.14)",
     opacity: 0.72,
+  },
+  voiceButton: {
+    alignItems: "center",
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    borderColor: "rgba(255, 255, 255, 0.14)",
+    borderRadius: 18,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: "center",
+    width: 36,
+  },
+  voiceButtonActive: {
+    backgroundColor: "rgba(248, 113, 113, 0.14)",
+    borderColor: "rgba(248, 113, 113, 0.32)",
+  },
+  voiceButtonStarting: {
+    opacity: 0.72,
+  },
+  voiceButtonDisabled: {
+    opacity: 0.48,
   },
   sheetSection: {
     borderTopColor: "rgba(255, 255, 255, 0.08)",

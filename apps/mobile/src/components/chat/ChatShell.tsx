@@ -34,6 +34,8 @@ export type ChatShellAction = {
   onPress: () => void;
 };
 
+type ChatShellComposerFooterRender = (actions: { closeAddSheet: () => void }) => ReactNode;
+
 export function ChatShell({
   banner,
   composerDisabled,
@@ -78,7 +80,7 @@ export function ChatShell({
   banner?: ReactNode;
   composerDisabled: boolean;
   composerDisabledPlaceholder?: string;
-  composerFooter?: ReactNode;
+  composerFooter?: ReactNode | ChatShellComposerFooterRender;
   composerFocusRequestKey?: number;
   composerFocusRecoveryKey?: number | string;
   composerInputEditable?: boolean;

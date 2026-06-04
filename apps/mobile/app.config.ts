@@ -75,6 +75,15 @@ export default function appConfig(_context: ConfigContext): ExpoConfig {
           microphonePermission: false,
         },
       ],
+      [
+        "expo-speech-recognition",
+        {
+          microphonePermission:
+            "JLT Relay uses the microphone to turn your speech into text in the chat composer.",
+          speechRecognitionPermission:
+            "JLT Relay uses speech recognition to turn your speech into text in the chat composer.",
+        },
+      ],
       "expo-font",
       "expo-image",
       "expo-system-ui",

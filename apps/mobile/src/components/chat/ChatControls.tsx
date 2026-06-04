@@ -21,12 +21,28 @@ type PickerOption = {
   value: string;
 };
 
+export type ChatControlPicker = "model" | "runtime";
+
+type ChatControlSelectionProps = {
+  models: CodexModel[];
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onSelectedModelChange: (model: string) => void;
+  onSelectedReasoningEffortChange: (reasoningEffort: ReasoningEffort | undefined) => void;
+  onSelectedServiceTierChange: (serviceTier: string | undefined) => void;
+  runtimeMode: RuntimeMode;
+  selectedModel?: string;
+  selectedReasoningEffort?: ReasoningEffort;
+  selectedServiceTier?: string;
+};
+
 export function ChatControls({
   models,
+  onRequestPicker,
   onRuntimeModeChange,
   onSelectedModelChange,
   onSelectedReasoningEffortChange,
   onSelectedServiceTierChange,
+  presentation = "rail",
   runtimeMode,
   selectedModel,
   selectedReasoningEffort,
@@ -37,12 +53,14 @@ export function ChatControls({
   onSelectedModelChange: (model: string) => void;
   onSelectedReasoningEffortChange: (reasoningEffort: ReasoningEffort | undefined) => void;
   onSelectedServiceTierChange: (serviceTier: string | undefined) => void;
+  presentation?: "menu" | "rail";
   runtimeMode: RuntimeMode;
   selectedModel?: string;
   selectedReasoningEffort?: ReasoningEffort;
   selectedServiceTier?: string;
+  onRequestPicker?: (picker: ChatControlPicker) => void;
 }) {
-  const [activePicker, setActivePicker] = useState<"model" | "runtime" | undefined>();
+  const [activePicker, setActivePicker] = useState<ChatControlPicker | undefined>();
   const activeModel = models.find((model) => model.model === selectedModel) ?? models[0];
   const fastServiceTier = fastServiceTierForModel(activeModel);
   const isFastModeEnabled = Boolean(fastServiceTier && selectedServiceTier === fastServiceTier.id);
@@ -54,16 +72,61 @@ export function ChatControls({
     subtitle: model.description ?? model.model,
     value: model.model,
   }));
-  const reasoningOptions = reasoningDisplayOptions(activeModel?.supportedReasoningEfforts ?? []);
-  const runtimeOptions = runtimeDisplayOptions();
 
   function closePicker() {
     setActivePicker(undefined);
   }
 
-  function openPicker(picker: "model" | "runtime") {
+  function openPicker(picker: ChatControlPicker) {
     hapticSelection();
+    if (presentation === "menu" && onRequestPicker) {
+      onRequestPicker(picker);
+      return;
+    }
     setActivePicker(picker);
+  }
+
+  const picker = (
+    <ChatControlPickerSheet
+      activePicker={activePicker}
+      models={models}
+      onClose={closePicker}
+      onRuntimeModeChange={onRuntimeModeChange}
+      onSelectedModelChange={onSelectedModelChange}
+      onSelectedReasoningEffortChange={onSelectedReasoningEffortChange}
+      onSelectedServiceTierChange={onSelectedServiceTierChange}
+      runtimeMode={runtimeMode}
+      selectedModel={selectedModel}
+      selectedReasoningEffort={selectedReasoningEffort}
+      selectedServiceTier={selectedServiceTier}
+    />
+  );
+
+  if (presentation === "menu") {
+    return (
+      <>
+        <SheetActionRow
+          accessibilityLabel={`Permissions ${selectedRuntimeOption.label}`}
+          icon={selectedRuntimeOption.icon ?? "permissions"}
+          iconBackgroundColor={selectedRuntimeOption.iconBackgroundColor}
+          iconTintColor={selectedRuntimeOption.iconTintColor}
+          onPress={() => openPicker("runtime")}
+          selectedTitleColor={selectedRuntimeOption.selectedTitleColor}
+          subtitle={selectedRuntimeOption.subtitle}
+          title={`Permissions: ${selectedRuntimeOption.compactLabel ?? selectedRuntimeOption.label}`}
+        />
+        <SheetActionRow
+          accessibilityLabel={`Model ${modelLabel}`}
+          disabled={modelOptions.length === 0}
+          icon={isFastModeEnabled ? "fast" : "model"}
+          iconTintColor={isFastModeEnabled ? "rgba(255, 214, 102, 0.9)" : undefined}
+          onPress={() => openPicker("model")}
+          subtitle={activeModel?.description ?? activeModel?.model}
+          title={`Model: ${modelLabel}`}
+        />
+        {onRequestPicker ? null : picker}
+      </>
+    );
   }
 
   return (
@@ -77,36 +140,69 @@ export function ChatControls({
           onPress={() => openPicker("model")}
         />
       </View>
-      <OptionSheet
-        activePicker={activePicker}
-        onClose={closePicker}
-        onSelect={(value) => {
-          if (activePicker === "model") {
-            onSelectedModelChange(value);
-          } else {
-            onRuntimeModeChange(value as RuntimeMode);
-          }
-          closePicker();
-        }}
-        options={activePicker === "model" ? modelOptions : runtimeOptions}
-        onReasoningSelect={(value) => {
-          onSelectedReasoningEffortChange(value as ReasoningEffort);
-          closePicker();
-        }}
-        onFastModeChange={(enabled) => {
-          onSelectedServiceTierChange(enabled ? fastServiceTier?.id : undefined);
-        }}
-        fastServiceTier={fastServiceTier}
-        isFastModeEnabled={isFastModeEnabled}
-        reasoningOptions={reasoningOptions}
-        selectedReasoningEffort={effectiveReasoningEffort}
-        selectedValue={
-          activePicker === "model" ? activeModel?.model : normalizeRuntimeMode(runtimeMode)
-        }
-        title={activePicker === "model" ? "Model" : "Permissions"}
-        visible={Boolean(activePicker)}
-      />
+      {picker}
     </View>
+  );
+}
+
+export function ChatControlPickerSheet({
+  activePicker,
+  models,
+  onClose,
+  onRuntimeModeChange,
+  onSelectedModelChange,
+  onSelectedReasoningEffortChange,
+  onSelectedServiceTierChange,
+  runtimeMode,
+  selectedModel,
+  selectedReasoningEffort,
+  selectedServiceTier,
+}: ChatControlSelectionProps & {
+  activePicker?: ChatControlPicker;
+  onClose: () => void;
+}) {
+  const activeModel = models.find((model) => model.model === selectedModel) ?? models[0];
+  const fastServiceTier = fastServiceTierForModel(activeModel);
+  const isFastModeEnabled = Boolean(fastServiceTier && selectedServiceTier === fastServiceTier.id);
+  const effectiveReasoningEffort = reasoningEffortForModel(activeModel, selectedReasoningEffort);
+  const modelOptions = models.map((model) => ({
+    label: model.displayName,
+    subtitle: model.description ?? model.model,
+    value: model.model,
+  }));
+  const reasoningOptions = reasoningDisplayOptions(activeModel?.supportedReasoningEfforts ?? []);
+  const runtimeOptions = runtimeDisplayOptions();
+
+  return (
+    <OptionSheet
+      activePicker={activePicker}
+      onClose={onClose}
+      onSelect={(value) => {
+        if (activePicker === "model") {
+          onSelectedModelChange(value);
+        } else {
+          onRuntimeModeChange(value as RuntimeMode);
+        }
+        onClose();
+      }}
+      options={activePicker === "model" ? modelOptions : runtimeOptions}
+      onReasoningSelect={(value) => {
+        onSelectedReasoningEffortChange(value as ReasoningEffort);
+        onClose();
+      }}
+      onFastModeChange={(enabled) => {
+        onSelectedServiceTierChange(enabled ? fastServiceTier?.id : undefined);
+      }}
+      fastServiceTier={fastServiceTier}
+      isFastModeEnabled={isFastModeEnabled}
+      reasoningOptions={reasoningOptions}
+      selectedReasoningEffort={effectiveReasoningEffort}
+      selectedValue={
+        activePicker === "model" ? activeModel?.model : normalizeRuntimeMode(runtimeMode)
+      }
+      title={activePicker === "model" ? "Model" : "Permissions"}
+      visible={Boolean(activePicker)}
+    />
   );
 }
 
