@@ -1032,6 +1032,82 @@ describe("Codex Relay server routes", () => {
     }
   });
 
+  it("returns before a local Codex automation run completes", async () => {
+    const previousAutomationsDir = process.env.CODEX_RELAY_AUTOMATIONS_DIR;
+    const root = await mkdtemp(join(tmpdir(), "codex-relay-automations-"));
+    const workspace = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const automationDir = join(root, "daily-report");
+    await mkdir(automationDir);
+    await writeFile(
+      join(automationDir, "automation.toml"),
+      [
+        'id = "daily-report"',
+        'name = "Daily Report"',
+        'prompt = "Summarize today."',
+        'status = "ACTIVE"',
+        `cwds = ["${workspace}"]`,
+      ].join("\n"),
+    );
+    process.env.CODEX_RELAY_AUTOMATIONS_DIR = root;
+
+    let unblockRun: (() => void) | undefined;
+    let resolveRunStarted: (() => void) | undefined;
+    const runStarted = new Promise<void>((resolve) => {
+      resolveRunStarted = resolve;
+    });
+    const codex: CodexClient = {
+      startThread() {
+        return {
+          id: "thread-1",
+          async run(prompt: string) {
+            resolveRunStarted?.();
+            await new Promise<void>((resolveRun) => {
+              unblockRun = resolveRun;
+            });
+            return { finalResponse: `result: ${prompt}` };
+          },
+          async runStreamed() {
+            async function* events() {}
+            return { events: events() };
+          },
+        };
+      },
+      resumeThread() {
+        throw new Error("resumeThread should not be called");
+      },
+    };
+    const app = createApp({ codex, workspacePath: workspace });
+
+    try {
+      const response = await Promise.race([
+        app.request("/v1/automations/daily-report/runs", {
+          method: "POST",
+          body: JSON.stringify({}),
+          headers: { "content-type": "application/json" },
+        }),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50)),
+      ]);
+
+      expect(response).not.toBe("timeout");
+      expect(response).toBeInstanceOf(Response);
+      if (response instanceof Response) {
+        expect(response.status).toBe(201);
+        expect(await response.json()).toMatchObject({
+          message: "Started Daily Report.",
+          threadId: "thread-1",
+        });
+      }
+      await Promise.race([runStarted, new Promise<void>((resolve) => setTimeout(resolve, 50))]);
+      unblockRun?.();
+    } finally {
+      if (previousAutomationsDir === undefined) {
+        delete process.env.CODEX_RELAY_AUTOMATIONS_DIR;
+      } else {
+        process.env.CODEX_RELAY_AUTOMATIONS_DIR = previousAutomationsDir;
+      }
+    }
+  });
+
   it("rejects expired client tokens", async () => {
     const sessions = await createTursoPairingSessionStore(":memory:");
     await sessions.createSession("expired-client-token", { expiresAt: Date.now() - 1 });

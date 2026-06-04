@@ -1255,26 +1255,38 @@ export function createApp(options: AppOptions = {}) {
           ),
         });
 
-    const response = await runPromptBuffered({
-      codex,
-      liveThreads,
-      messagesByThreadId,
-      prompt: automation.prompt,
-      attachments: [],
-      threadId,
-      threadOptions: { ...threadOptions, workingDirectory: selectedWorkspacePath.path },
-      runOptions,
-      skills: [],
-      threads,
-    });
-    if (response.status >= 400) {
-      return secureJson(
-        c,
-        options.pairing,
-        secureSessionsByTokenHash,
-        response.body,
-        response.status,
-      );
+    if (appServer) {
+      startAutomationAppServerTurn({
+        activeAppServerTurnIdsByThreadId,
+        appServer,
+        messagesByThreadId,
+        prompt: automation.prompt,
+        runOptions,
+        threadId,
+        threads,
+        workspacePath: selectedWorkspacePath.path,
+      });
+    } else {
+      void runPromptBuffered({
+        codex,
+        liveThreads,
+        messagesByThreadId,
+        prompt: automation.prompt,
+        attachments: [],
+        threadId,
+        threadOptions: { ...threadOptions, workingDirectory: selectedWorkspacePath.path },
+        runOptions,
+        skills: [],
+        threads,
+      }).then((response) => {
+        if (response.status >= 400) {
+          relayDebugLog("automation.run.background_failed", {
+            automationId,
+            status: response.status,
+            threadId,
+          });
+        }
+      });
     }
 
     const body: RunAutomationResponse = RunAutomationResponseSchema.parse({
@@ -2799,6 +2811,83 @@ async function runPromptBuffered(input: {
       body: apiError("codex_run_failed", failed.lastError ?? "Codex run failed."),
     };
   }
+}
+
+function startAutomationAppServerTurn(input: {
+  activeAppServerTurnIdsByThreadId: Map<string, string>;
+  appServer: CodexAppServerClient;
+  messagesByThreadId: Map<string, ChatMessage[]>;
+  prompt: string;
+  runOptions: {
+    model?: string;
+    serviceTier?: string;
+    runtimeMode?: RuntimeMode;
+    approvalPolicy?: string;
+    sandboxMode?: string;
+    reasoningEffort?: string;
+    collaborationMode?: ThreadCollaborationMode;
+  };
+  threadId: string;
+  threads: Map<string, ThreadMetadata>;
+  workspacePath: string;
+}) {
+  const userMessage = appendMessage(input.messagesByThreadId, input.threadId, {
+    role: "user",
+    content: input.prompt,
+    details: chatMessageDetailsFromPromptContext({ attachments: [] }),
+  });
+  updateThread(input.threads, input.messagesByThreadId, input.threadId, {
+    state: "running",
+    lastPrompt: input.prompt,
+    lastError: undefined,
+    title: maybeReplaceDefaultTitle(input.threads.get(input.threadId)?.title, input.prompt),
+    ...runtimeMetadataFromOptions(input.runOptions),
+  });
+
+  void startAppServerTurn(input.appServer, input.threadId, {
+    attachments: [],
+    id: randomUUID(),
+    prompt: input.prompt,
+    runOptions: input.runOptions,
+    skills: [],
+    workspacePath: input.workspacePath,
+  })
+    .then((turn) => {
+      input.activeAppServerTurnIdsByThreadId.set(input.threadId, turn.id);
+      for (const item of turn.items) {
+        replaceDuplicateInitialUserMessage(
+          input.messagesByThreadId,
+          input.threadId,
+          turn.id,
+          item,
+          userMessage.id,
+          input.prompt,
+        );
+      }
+      relayDebugLog("automation.run.background_started", {
+        threadId: input.threadId,
+        turnId: turn.id,
+      });
+    })
+    .catch((error) => {
+      const threadSummary = updateThread(input.threads, input.messagesByThreadId, input.threadId, {
+        state: "failed",
+        lastError: errorMessage(error),
+      });
+      const errorBody = apiError(
+        "codex_run_failed",
+        threadSummary.lastError ?? "Codex run failed.",
+      );
+      appendMessage(input.messagesByThreadId, input.threadId, {
+        role: "error",
+        content: errorBody.error.message,
+        state: "failed",
+      });
+      relayDebugLog("automation.run.background_failed", {
+        error: errorBody.error.message,
+        threadId: input.threadId,
+      });
+    });
 }
 
 async function runPromptStreamed(input: {

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jlt.codex-relay.healthcheck</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/mormontjiang/.local/bin/jlt-relay-healthcheck</string>
+  </array>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>JLT_RELAY_RECOVER_SCRIPT</key>
+    <string>/Users/mormontjiang/.local/bin/jlt-relay-recover-local</string>
+
+    <key>JLT_RELAY_HEALTHCHECK_LOG</key>
+    <string>/Users/mormontjiang/.local/state/jlt-relay/healthcheck.log</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StartInterval</key>
+  <integer>60</integer>
+
+  <key>StandardOutPath</key>
+  <string>/Users/mormontjiang/.local/state/jlt-relay/healthcheck.launchd.out.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>/Users/mormontjiang/.local/state/jlt-relay/healthcheck.launchd.err.log</string>
+</dict>
+</plist>
