@@ -441,11 +441,11 @@ function useThreadDrawerActions({
   threadsById: Record<string, ThreadSummary>;
   workspacePath: string | undefined;
 }) {
-  const pendingThreadSelectionTaskRef = useRef<{ cancel: () => void } | undefined>(undefined);
+  const pendingDrawerActionTaskRef = useRef<{ cancel: () => void } | undefined>(undefined);
 
   useEffect(
     () => () => {
-      pendingThreadSelectionTaskRef.current?.cancel();
+      pendingDrawerActionTaskRef.current?.cancel();
     },
     [],
   );
@@ -490,11 +490,11 @@ function useThreadDrawerActions({
     (threadId: string) => {
       hapticSelection();
       navigation.closeDrawer();
-      pendingThreadSelectionTaskRef.current?.cancel();
+      pendingDrawerActionTaskRef.current?.cancel();
       if (chatStore$.activeThreadId.peek() === threadId) {
         return;
       }
-      pendingThreadSelectionTaskRef.current = InteractionManager.runAfterInteractions(() => {
+      pendingDrawerActionTaskRef.current = InteractionManager.runAfterInteractions(() => {
         void activateSelectedThread(threadId);
       });
     },
@@ -649,7 +649,10 @@ function useThreadDrawerActions({
   const openSettings = useCallback(() => {
     hapticSelection();
     navigation.closeDrawer();
-    router.push("/settings");
+    pendingDrawerActionTaskRef.current?.cancel();
+    pendingDrawerActionTaskRef.current = InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => router.push("/settings"));
+    });
   }, [navigation]);
 
   return {

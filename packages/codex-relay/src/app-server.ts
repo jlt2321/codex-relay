@@ -117,6 +117,25 @@ export type AppServerRateLimits = {
   rateLimitsByLimitId?: Record<string, unknown>;
 };
 
+export type AppServerThreadGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export type AppServerThreadGoal = {
+  threadId: string;
+  objective: string;
+  status: AppServerThreadGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type AppServerRequest = {
   id: number;
   method: string;
@@ -174,6 +193,21 @@ export type AppServerTurnInterruptParams = {
 };
 
 export type AppServerThreadArchiveParams = {
+  threadId: string;
+};
+
+export type AppServerThreadGoalGetParams = {
+  threadId: string;
+};
+
+export type AppServerThreadGoalSetParams = {
+  threadId: string;
+  objective?: string | null;
+  status?: AppServerThreadGoalStatus | null;
+  tokenBudget?: number | null;
+};
+
+export type AppServerThreadGoalClearParams = {
   threadId: string;
 };
 
@@ -238,6 +272,23 @@ export class CodexAppServerClient {
 
   async archiveThread(params: AppServerThreadArchiveParams) {
     await this.request("thread/archive", params);
+  }
+
+  async getThreadGoal(params: AppServerThreadGoalGetParams) {
+    const response = await this.request<{ goal: AppServerThreadGoal | null }>(
+      "thread/goal/get",
+      params,
+    );
+    return response.goal;
+  }
+
+  async setThreadGoal(params: AppServerThreadGoalSetParams) {
+    const response = await this.request<{ goal: AppServerThreadGoal }>("thread/goal/set", params);
+    return response.goal;
+  }
+
+  async clearThreadGoal(params: AppServerThreadGoalClearParams) {
+    await this.request("thread/goal/clear", params);
   }
 
   onNotification(handler: (notification: AppServerNotification) => void) {
@@ -317,7 +368,7 @@ export class CodexAppServerClient {
       clientInfo: {
         name: "codex-relay",
         title: "Codex Relay Mobile Server",
-        version: "0.1.0",
+        version: "1.2.0",
       },
       capabilities: {
         experimentalApi: true,

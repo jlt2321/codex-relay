@@ -35,6 +35,7 @@ export const threadRunStreamEventTypes: StreamThreadRunEvent["type"][] = [
   "thread.message.delta",
   "thread.message.completed",
   "thread.state.changed",
+  "thread.goal.updated",
   "thread.error",
   "thread.preview_target.detected",
   "thread.input_request.created",

@@ -26,7 +26,9 @@ import {
   SubmitThreadInputResponseSchema,
   ThreadContextWindowResponseSchema,
   ThreadDetailResponseSchema,
+  ThreadGoalResponseSchema,
   ThreadMessageDetailResponseSchema,
+  UpdateThreadGoalRequestSchema,
   UpdateWorkspaceFileContentRequestSchema,
   UpdateRuntimePreferencesRequestSchema,
   VersionResponseSchema,
@@ -64,8 +66,10 @@ import {
   type SubmitThreadInputResponse,
   type ThreadContextWindowResponse,
   type ThreadDetailResponse,
+  type ThreadGoalResponse,
   type ThreadMessageDetailField,
   type ThreadMessageDetailResponse,
+  type UpdateThreadGoalRequest,
   type UpdateWorkspaceFileContentRequest,
   type UpdateRuntimePreferencesRequest,
   type VersionResponse,
@@ -1076,6 +1080,34 @@ export async function getThreadContextWindow(
     apiPaths.threadContextWindow(threadId),
     undefined,
     ThreadContextWindowResponseSchema.parse,
+  );
+}
+
+export async function getThreadGoal(threadId: string): Promise<ThreadGoalResponse> {
+  return request(apiPaths.threadGoal(threadId), undefined, ThreadGoalResponseSchema.parse);
+}
+
+export async function updateThreadGoal(
+  threadId: string,
+  body: UpdateThreadGoalRequest,
+): Promise<ThreadGoalResponse> {
+  return request(
+    apiPaths.threadGoal(threadId),
+    {
+      method: "POST",
+      body: encryptRequestPayload(UpdateThreadGoalRequestSchema.parse(body)),
+    },
+    ThreadGoalResponseSchema.parse,
+  );
+}
+
+export async function clearThreadGoal(threadId: string): Promise<ThreadGoalResponse> {
+  return request(
+    apiPaths.threadGoal(threadId),
+    {
+      method: "DELETE",
+    },
+    ThreadGoalResponseSchema.parse,
   );
 }
 

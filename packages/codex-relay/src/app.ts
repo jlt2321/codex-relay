@@ -30,9 +30,13 @@ import {
   SubmitThreadInputResponseSchema,
   ThreadContextWindowResponseSchema,
   ThreadDetailResponseSchema,
+  ThreadGoalResponseSchema,
+  ThreadGoalSchema,
+  ThreadGoalStatusSchema,
   ThreadMessageDetailFieldSchema,
   ThreadMessageDetailResponseSchema,
   ThreadSummarySchema,
+  UpdateThreadGoalRequestSchema,
   UpdateWorkspaceFileContentRequestSchema,
   UpdateRuntimePreferencesRequestSchema,
   VersionResponseSchema,
@@ -76,8 +80,10 @@ import {
   type StreamThreadRunEvent,
   type SubmitThreadInputResponse,
   type ThreadCollaborationMode,
+  type ThreadGoal,
   type ThreadMessageDetailField,
   type ThreadSummary,
+  type UpdateThreadGoalRequest,
   type UpdateWorkspaceFileContentRequest,
   type VersionResponse,
   type WebPreviewTarget,
@@ -116,6 +122,7 @@ import {
   type AppServerRateLimits,
   type AppServerRequest,
   type AppServerThread,
+  type AppServerThreadGoal,
   type AppServerThreadItem,
   type AppServerTurn,
   type AppServerTurnStartParams,
@@ -203,6 +210,17 @@ type RuntimeOptionSubset = {
 
 const PairApproveRequestSchema = z.object({
   approvalCode: z.string().trim().min(1),
+});
+
+const AppServerThreadGoalPayloadSchema = z.object({
+  threadId: z.string().min(1),
+  objective: z.string().trim().min(1),
+  status: ThreadGoalStatusSchema,
+  tokenBudget: z.number().int().positive().nullable(),
+  tokensUsed: z.number().int().nonnegative(),
+  timeUsedSeconds: z.number().int().nonnegative(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
 });
 
 type PendingApproval = {
@@ -1902,6 +1920,153 @@ export function createApp(options: AppOptions = {}) {
     );
   });
 
+  app.get("/v1/threads/:threadId/goal", async (c) => {
+    const threadId = c.req.param("threadId");
+    if (!appServer) {
+      const thread = threads.get(threadId);
+      if (!thread) {
+        return secureJson(
+          c,
+          options.pairing,
+          secureSessionsByTokenHash,
+          apiError("not_found", `Thread ${threadId} is not known to this server.`),
+          404,
+        );
+      }
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        ThreadGoalResponseSchema.parse({ goal: thread.goal ?? null, thread }),
+      );
+    }
+
+    try {
+      const thread = rememberAppServerThread(
+        threads,
+        await appServer.readThread(threadId, { includeTurns: false }),
+      );
+      const goal = mapAppServerThreadGoal(await appServer.getThreadGoal({ threadId }));
+      const threadWithGoal = rememberThreadGoal(threads, thread, goal);
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        ThreadGoalResponseSchema.parse({ goal, thread: threadWithGoal }),
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = /not found|no rollout found/i.test(message) ? 404 : 502;
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError(status === 404 ? "not_found" : "goal_unavailable", message),
+        status,
+      );
+    }
+  });
+
+  app.post("/v1/threads/:threadId/goal", async (c) => {
+    const threadId = c.req.param("threadId");
+    if (!appServer) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("unsupported", "Thread goals require the Codex app-server."),
+        409,
+      );
+    }
+
+    const parsed = await parseRequestJson(
+      c,
+      options.pairing,
+      secureSessionsByTokenHash,
+      UpdateThreadGoalRequestSchema,
+    );
+    if (!parsed.success) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        validationError(parsed.error),
+        400,
+      );
+    }
+
+    try {
+      const body: UpdateThreadGoalRequest = parsed.data;
+      const thread = rememberAppServerThread(
+        threads,
+        await appServer.readThread(threadId, { includeTurns: false }),
+      );
+      const goal = mapAppServerThreadGoal(
+        await appServer.setThreadGoal({
+          threadId,
+          objective: body.objective,
+          status: body.status,
+          tokenBudget: body.tokenBudget,
+        }),
+      );
+      const threadWithGoal = rememberThreadGoal(threads, thread, goal);
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        ThreadGoalResponseSchema.parse({ goal, thread: threadWithGoal }),
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = /not found|no rollout found/i.test(message) ? 404 : 502;
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError(status === 404 ? "not_found" : "goal_unavailable", message),
+        status,
+      );
+    }
+  });
+
+  app.delete("/v1/threads/:threadId/goal", async (c) => {
+    const threadId = c.req.param("threadId");
+    if (!appServer) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("unsupported", "Thread goals require the Codex app-server."),
+        409,
+      );
+    }
+
+    try {
+      const thread = rememberAppServerThread(
+        threads,
+        await appServer.readThread(threadId, { includeTurns: false }),
+      );
+      await appServer.clearThreadGoal({ threadId });
+      const threadWithoutGoal = rememberThreadGoal(threads, thread, null);
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        ThreadGoalResponseSchema.parse({ goal: null, thread: threadWithoutGoal }),
+      );
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = /not found|no rollout found/i.test(message) ? 404 : 502;
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError(status === 404 ? "not_found" : "goal_unavailable", message),
+        status,
+      );
+    }
+  });
+
   app.get("/openapi.json", (c) =>
     secureJson(c, options.pairing, secureSessionsByTokenHash, createOpenApiDocument()),
   );
@@ -3381,6 +3546,24 @@ async function streamRunningAppServerThread(input: {
             }
             return;
           }
+          case "thread/goal/updated":
+          case "thread/goal/cleared": {
+            const goal =
+              notification.method === "thread/goal/updated"
+                ? mapAppServerThreadGoal(appServerThreadGoalFromParams(params))
+                : null;
+            const currentThreadSummary = threadSummary ?? input.threads.get(input.threadId);
+            if (!currentThreadSummary) {
+              return;
+            }
+            threadSummary = rememberThreadGoal(input.threads, currentThreadSummary, goal);
+            sendSse(input.controller, input.encoder, input.secureSession, {
+              type: "thread.goal.updated",
+              thread: threadSummary,
+              goal,
+            });
+            return;
+          }
           case "turn/started":
             observedTurnActivity = true;
             activeTurnId = firstString(params, ["turnId"]) ?? turnIdFromParams(params);
@@ -3709,6 +3892,20 @@ async function runAppServerPromptStreamed(input: {
             sendSse(input.controller, input.encoder, input.secureSession, {
               type: "thread.state.changed",
               thread: threadSummary,
+            });
+            return;
+          }
+          case "thread/goal/updated":
+          case "thread/goal/cleared": {
+            const goal =
+              notification.method === "thread/goal/updated"
+                ? mapAppServerThreadGoal(appServerThreadGoalFromParams(params))
+                : null;
+            threadSummary = rememberThreadGoal(input.threads, threadSummary, goal);
+            sendSse(input.controller, input.encoder, input.secureSession, {
+              type: "thread.goal.updated",
+              thread: threadSummary,
+              goal,
             });
             return;
           }
@@ -5949,11 +6146,41 @@ function rememberAppServerThread(threads: Map<string, ThreadMetadata>, thread: A
   const mappedThread = mapAppServerThread(thread, existingThread?.messageCount);
   const threadWithLocalRuntime = ThreadSummarySchema.parse({
     ...mappedThread,
+    goal: existingThread?.goal ?? mappedThread.goal,
     ...runtimeMetadataFromOptions(existingThread ?? {}),
     model: existingThread?.model ?? mappedThread.model,
   });
   threads.set(threadWithLocalRuntime.id, threadWithLocalRuntime);
   return threadWithLocalRuntime;
+}
+
+function mapAppServerThreadGoal(goal: AppServerThreadGoal | null): ThreadGoal | null {
+  if (!goal) {
+    return null;
+  }
+  return ThreadGoalSchema.parse({
+    ...goal,
+    createdAt: fromUnixSeconds(goal.createdAt),
+    updatedAt: fromUnixSeconds(goal.updatedAt),
+  });
+}
+
+function appServerThreadGoalFromParams(params: Record<string, unknown> | undefined) {
+  const parsed = AppServerThreadGoalPayloadSchema.safeParse(params?.goal);
+  return parsed.success ? parsed.data : null;
+}
+
+function rememberThreadGoal(
+  threads: Map<string, ThreadMetadata>,
+  thread: ThreadMetadata,
+  goal: ThreadGoal | null,
+) {
+  const next = ThreadSummarySchema.parse({
+    ...thread,
+    goal,
+  });
+  threads.set(next.id, next);
+  return next;
 }
 
 function preserveKnownRunningThreadState(thread: ThreadMetadata, wasKnownRunning: boolean) {

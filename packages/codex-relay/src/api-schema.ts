@@ -32,6 +32,14 @@ export const RuntimeModeSchema = z.enum(["default", "auto", "full-access", "on-r
 export const SandboxModeSchema = z.enum(["workspace-write", "danger-full-access", "read-only"]);
 export const ReasoningEffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh"]);
 export const ThreadCollaborationModeSchema = z.enum(["default", "plan"]);
+export const ThreadGoalStatusSchema = z.enum([
+  "active",
+  "paused",
+  "blocked",
+  "usageLimited",
+  "budgetLimited",
+  "complete",
+]);
 
 export const VersionResponseSchema = z.object({
   ok: z.boolean(),
@@ -137,6 +145,17 @@ export const ThreadContextWindowResponseSchema = z.object({
   threadId: z.string().min(1),
   usage: ContextWindowUsageSchema.nullable(),
   rolloutPath: z.string().nullable().optional(),
+});
+
+export const ThreadGoalSchema = z.object({
+  threadId: z.string().min(1),
+  objective: z.string().trim().min(1),
+  status: ThreadGoalStatusSchema,
+  tokenBudget: z.number().int().positive().nullable(),
+  tokensUsed: z.number().int().nonnegative(),
+  timeUsedSeconds: z.number().int().nonnegative(),
+  createdAt: IsoDateTimeSchema,
+  updatedAt: IsoDateTimeSchema,
 });
 
 const PromptAttachmentBaseSchema = z.object({
@@ -266,6 +285,7 @@ export const ThreadSummarySchema = z.object({
   lastPrompt: z.string().optional(),
   lastResult: z.string().optional(),
   lastError: z.string().optional(),
+  goal: ThreadGoalSchema.nullable().optional(),
 });
 
 export const StatusResponseSchema = z.object({
@@ -608,6 +628,21 @@ export const QueuedThreadInputActionResponseSchema = z.object({
   thread: ThreadSummarySchema,
 });
 
+export const UpdateThreadGoalRequestSchema = z
+  .object({
+    objective: z.string().trim().min(1).optional(),
+    status: ThreadGoalStatusSchema.optional(),
+    tokenBudget: z.number().int().positive().nullable().optional(),
+  })
+  .refine((input) => input.objective || input.status || input.tokenBudget !== undefined, {
+    message: "At least one goal field is required.",
+  });
+
+export const ThreadGoalResponseSchema = z.object({
+  goal: ThreadGoalSchema.nullable(),
+  thread: ThreadSummarySchema,
+});
+
 export const InterruptThreadRunResponseSchema = z.object({
   thread: ThreadSummarySchema,
 });
@@ -684,6 +719,11 @@ export const StreamThreadRunEventSchema = z.discriminatedUnion("type", [
     thread: ThreadSummarySchema,
   }),
   z.object({
+    type: z.literal("thread.goal.updated"),
+    thread: ThreadSummarySchema,
+    goal: ThreadGoalSchema.nullable(),
+  }),
+  z.object({
     type: z.literal("thread.error"),
     thread: ThreadSummarySchema.optional(),
     error: ErrorResponseSchema.shape.error,
@@ -732,6 +772,9 @@ export type RateLimitBucket = z.infer<typeof RateLimitBucketSchema>;
 export type RateLimitWindow = z.infer<typeof RateLimitWindowSchema>;
 export type RateLimitsResponse = z.infer<typeof RateLimitsResponseSchema>;
 export type ThreadContextWindowResponse = z.infer<typeof ThreadContextWindowResponseSchema>;
+export type ThreadGoal = z.infer<typeof ThreadGoalSchema>;
+export type ThreadGoalResponse = z.infer<typeof ThreadGoalResponseSchema>;
+export type ThreadGoalStatus = z.infer<typeof ThreadGoalStatusSchema>;
 export type PromptAttachment = z.infer<typeof PromptAttachmentSchema>;
 export type PendingInputRequest = z.infer<typeof PendingInputRequestSchema>;
 export type PendingInputRequestQuestion = z.infer<typeof PendingInputRequestQuestionSchema>;
@@ -779,6 +822,7 @@ export type ImageAttachmentUploadResponse = z.infer<typeof ImageAttachmentUpload
 export type QueuedThreadInput = z.infer<typeof QueuedThreadInputSchema>;
 export type SubmitThreadInputResponse = z.infer<typeof SubmitThreadInputResponseSchema>;
 export type QueuedThreadInputActionResponse = z.infer<typeof QueuedThreadInputActionResponseSchema>;
+export type UpdateThreadGoalRequest = z.infer<typeof UpdateThreadGoalRequestSchema>;
 export type InterruptThreadRunResponse = z.infer<typeof InterruptThreadRunResponseSchema>;
 export type ListQueuedThreadInputsResponse = z.infer<typeof ListQueuedThreadInputsResponseSchema>;
 export type ApprovalDecision = z.infer<typeof ApprovalDecisionSchema>;
@@ -1037,6 +1081,7 @@ export const apiPaths = {
   threadArchive: (threadId: string) => `/v1/threads/${encodeURIComponent(threadId)}`,
   threadContextWindow: (threadId: string) =>
     `/v1/threads/${encodeURIComponent(threadId)}/context-window`,
+  threadGoal: (threadId: string) => `/v1/threads/${encodeURIComponent(threadId)}/goal`,
   threadMessageDetail: (threadId: string, messageId: string, field: ThreadMessageDetailField) =>
     `/v1/threads/${encodeURIComponent(threadId)}/messages/${encodeURIComponent(messageId)}/details/${encodeURIComponent(field)}`,
   approval: (approvalId: string) => `/v1/approvals/${encodeURIComponent(approvalId)}`,
@@ -1056,7 +1101,7 @@ export function createOpenApiDocument() {
     openapi: "3.1.0",
     info: {
       title: "Codex Relay Local Codex API",
-      version: "0.1.0",
+      version: "1.2.0",
     },
     paths: {
       "/version": {
@@ -1211,6 +1256,36 @@ export function createOpenApiDocument() {
           },
         },
       },
+      "/v1/threads/{threadId}/goal": {
+        get: {
+          summary: "Read the active goal for a Codex app-server thread",
+          responses: {
+            "200": jsonResponse("ThreadGoalResponse"),
+            "404": jsonResponse("ErrorResponse"),
+            "502": jsonResponse("ErrorResponse"),
+          },
+        },
+        post: {
+          summary: "Update the active goal for a Codex app-server thread",
+          requestBody: jsonRequest("UpdateThreadGoalRequest"),
+          responses: {
+            "200": jsonResponse("ThreadGoalResponse"),
+            "400": jsonResponse("ErrorResponse"),
+            "404": jsonResponse("ErrorResponse"),
+            "409": jsonResponse("ErrorResponse"),
+            "502": jsonResponse("ErrorResponse"),
+          },
+        },
+        delete: {
+          summary: "Clear the active goal for a Codex app-server thread",
+          responses: {
+            "200": jsonResponse("ThreadGoalResponse"),
+            "404": jsonResponse("ErrorResponse"),
+            "409": jsonResponse("ErrorResponse"),
+            "502": jsonResponse("ErrorResponse"),
+          },
+        },
+      },
       "/v1/threads/{threadId}/input": {
         post: {
           summary: "Submit input to an already-running Codex thread",
@@ -1294,6 +1369,50 @@ export function createOpenApiDocument() {
             lastPrompt: { type: "string" },
             lastResult: { type: "string" },
             lastError: { type: "string" },
+            goal: {
+              anyOf: [{ $ref: "#/components/schemas/ThreadGoal" }, { type: "null" }],
+            },
+          },
+        },
+        ThreadGoal: {
+          type: "object",
+          required: [
+            "threadId",
+            "objective",
+            "status",
+            "tokenBudget",
+            "tokensUsed",
+            "timeUsedSeconds",
+            "createdAt",
+            "updatedAt",
+          ],
+          properties: {
+            threadId: { type: "string" },
+            objective: { type: "string" },
+            status: { type: "string", enum: ThreadGoalStatusSchema.options },
+            tokenBudget: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
+            tokensUsed: { type: "integer", minimum: 0 },
+            timeUsedSeconds: { type: "integer", minimum: 0 },
+            createdAt: { type: "string", format: "date-time" },
+            updatedAt: { type: "string", format: "date-time" },
+          },
+        },
+        UpdateThreadGoalRequest: {
+          type: "object",
+          properties: {
+            objective: { type: "string" },
+            status: { type: "string", enum: ThreadGoalStatusSchema.options },
+            tokenBudget: { anyOf: [{ type: "integer", minimum: 1 }, { type: "null" }] },
+          },
+        },
+        ThreadGoalResponse: {
+          type: "object",
+          required: ["goal", "thread"],
+          properties: {
+            goal: {
+              anyOf: [{ $ref: "#/components/schemas/ThreadGoal" }, { type: "null" }],
+            },
+            thread: { $ref: "#/components/schemas/ThreadSummary" },
           },
         },
         StatusResponse: {

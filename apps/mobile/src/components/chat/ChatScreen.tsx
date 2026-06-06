@@ -65,6 +65,7 @@ import { runtimePreferencesForWorkspace } from "@/lib/runtime-preferences";
 import {
   applyStreamEventToServerState,
   checkoutWorkspaceBranchServerState,
+  clearThreadGoalServerState,
   clearServerState,
   commitPushWorkspaceServerState,
   createThreadServerState,
@@ -73,6 +74,7 @@ import {
   fetchQueuedInputsState,
   fetchRateLimitsState,
   fetchStatusState,
+  fetchThreadGoalState,
   fetchThreadState,
   fetchThreadsState,
   fetchWorkspaceChangesState,
@@ -92,6 +94,7 @@ import {
   setWorkspaceRuntimePreferencesState,
   steerQueuedThreadInputServerState,
   submitThreadInputServerState,
+  updateThreadGoalServerState,
   updateRuntimePreferencesServerState,
 } from "@/lib/server-state";
 import { completeThreadRunSession, handleThreadRunStreamEvent } from "@/lib/thread-run-stream";
@@ -265,6 +268,27 @@ export function ChatScreen() {
           queryKey: serverStateKeys.queuedInputs(input.threadId),
         })
         .catch(() => undefined);
+      void queryClient
+        .invalidateQueries({ queryKey: serverStateKeys.thread(input.threadId) })
+        .catch(() => undefined);
+    },
+  });
+  const updateThreadGoalMutation = useMutation({
+    mutationFn: (input: { objective?: string; status?: "active" | "paused"; threadId: string }) =>
+      updateThreadGoalServerState(queryClient, input.threadId, {
+        objective: input.objective,
+        status: input.status,
+      }),
+    onSuccess: (_response, input) => {
+      void queryClient
+        .invalidateQueries({ queryKey: serverStateKeys.thread(input.threadId) })
+        .catch(() => undefined);
+    },
+  });
+  const clearThreadGoalMutation = useMutation({
+    mutationFn: (input: { threadId: string }) =>
+      clearThreadGoalServerState(queryClient, input.threadId),
+    onSuccess: (_response, input) => {
       void queryClient
         .invalidateQueries({ queryKey: serverStateKeys.thread(input.threadId) })
         .catch(() => undefined);
@@ -539,6 +563,7 @@ export function ChatScreen() {
         await Promise.all([
           fetchQueuedInputsState(queryClient, threadId).catch(() => undefined),
           fetchContextWindowState(queryClient, threadId).catch(() => undefined),
+          fetchThreadGoalState(queryClient, threadId).catch(() => undefined),
         ]);
         setConnection("connected");
         return response.thread.state;
@@ -1787,6 +1812,33 @@ export function ChatScreen() {
     hapticWarning();
   }
 
+  function saveThreadGoalObjective(objective: string) {
+    if (!activeThreadId) {
+      return;
+    }
+    updateThreadGoalMutation.mutate({ threadId: activeThreadId, objective });
+    hapticSelection();
+  }
+
+  function toggleThreadGoalPause() {
+    if (!activeThreadId || !activeThread?.goal) {
+      return;
+    }
+    updateThreadGoalMutation.mutate({
+      threadId: activeThreadId,
+      status: activeThread.goal.status === "paused" ? "active" : "paused",
+    });
+    hapticMediumImpact();
+  }
+
+  function clearThreadGoal() {
+    if (!activeThreadId) {
+      return;
+    }
+    clearThreadGoalMutation.mutate({ threadId: activeThreadId });
+    hapticWarning();
+  }
+
   async function createNewThread() {
     if (isRunning) {
       return;
@@ -2028,6 +2080,7 @@ export function ChatScreen() {
               />
             )}
             contextWindowUsage={contextWindowUsage}
+            goal={activeThread?.goal ?? null}
             inputNativeID={CHAT_INPUT_NATIVE_ID}
             isAttachingImage={isAttachingImages}
             isLoadingMessages={isLoadingMessages}
@@ -2052,6 +2105,9 @@ export function ChatScreen() {
             onRestoreQueuedPrompt={(item) => void restoreQueuedPrompt(item)}
             onSend={() => sendPrompt()}
             onSteerQueuedPrompt={(item) => void steerQueuedPrompt(item)}
+            onClearGoal={clearThreadGoal}
+            onSaveGoal={saveThreadGoalObjective}
+            onToggleGoalPause={toggleThreadGoalPause}
             pendingInputRequest={pendingInputRequest}
             queuedPrompts={queuedPrompts}
             rateLimitBuckets={rateLimitBuckets}

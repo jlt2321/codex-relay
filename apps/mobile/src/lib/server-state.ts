@@ -13,6 +13,7 @@ import type {
   StreamThreadRunEvent,
   ThreadDetailResponse,
   ThreadSummary,
+  UpdateThreadGoalRequest,
   VersionResponse,
 } from "codex-relay/api-schema";
 import {
@@ -24,8 +25,10 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import {
   archiveThread,
   checkoutWorkspaceBranch,
+  clearThreadGoal,
   commitPushWorkspace,
   createThread,
+  getThreadGoal,
   getCodexRelayServerUrl,
   getRateLimits,
   getStatus,
@@ -40,6 +43,7 @@ import {
   removeQueuedThreadInput,
   steerQueuedThreadInput,
   submitThreadInput,
+  updateThreadGoal,
   updateRuntimePreferences,
 } from "@/lib/codex-relay-api";
 import {
@@ -128,6 +132,12 @@ export function fetchContextWindowState(queryClient: QueryClient, threadId: stri
     queryKey: serverStateKeys.contextWindow(threadId),
     queryFn: () => getThreadContextWindow(threadId),
   });
+}
+
+export async function fetchThreadGoalState(queryClient: QueryClient, threadId: string) {
+  const response = await getThreadGoal(threadId);
+  upsertThreadState(queryClient, response.thread);
+  return response;
 }
 
 export function fetchWorkspaceChangesState(
@@ -233,6 +243,22 @@ export function updateRuntimePreferencesServerState(
   body: Parameters<typeof updateRuntimePreferences>[0],
 ) {
   return updateRuntimePreferences(body);
+}
+
+export async function updateThreadGoalServerState(
+  queryClient: QueryClient,
+  threadId: string,
+  body: UpdateThreadGoalRequest,
+) {
+  const response = await updateThreadGoal(threadId, body);
+  upsertThreadState(queryClient, response.thread);
+  return response;
+}
+
+export async function clearThreadGoalServerState(queryClient: QueryClient, threadId: string) {
+  const response = await clearThreadGoal(threadId);
+  upsertThreadState(queryClient, response.thread);
+  return response;
 }
 
 export function clearServerState(queryClient: QueryClient) {
@@ -544,6 +570,9 @@ export function applyStreamEventToServerState(
       upsertMessageState(queryClient, event.thread, event.message);
       return;
     case "thread.state.changed":
+      upsertThreadState(queryClient, event.thread);
+      return;
+    case "thread.goal.updated":
       upsertThreadState(queryClient, event.thread);
       return;
     case "thread.error":

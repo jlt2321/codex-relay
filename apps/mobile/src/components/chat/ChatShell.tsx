@@ -5,6 +5,7 @@ import type {
   PendingInputRequest,
   RateLimitBucket,
   ThreadCollaborationMode,
+  ThreadGoal,
 } from "codex-relay/api-schema";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Keyboard, Pressable, View } from "react-native";
@@ -46,6 +47,7 @@ export function ChatShell({
   composerInputEditable,
   contextWindowUsage,
   collaborationMode,
+  goal,
   inputNativeID,
   isAttachingImage,
   isLoadingMessages,
@@ -66,6 +68,9 @@ export function ChatShell({
   onRestoreQueuedPrompt,
   onSend,
   onSteerQueuedPrompt,
+  onClearGoal,
+  onSaveGoal,
+  onToggleGoalPause,
   queuedPrompts,
   rateLimitBuckets,
   pendingInputRequest,
@@ -86,6 +91,7 @@ export function ChatShell({
   composerInputEditable?: boolean;
   contextWindowUsage?: ContextWindowUsage;
   collaborationMode: ThreadCollaborationMode;
+  goal?: ThreadGoal | null;
   inputNativeID: string;
   isAttachingImage: boolean;
   isLoadingMessages?: boolean;
@@ -106,6 +112,9 @@ export function ChatShell({
   onRestoreQueuedPrompt?: (item: QueuedComposerPrompt) => void;
   onSend: () => void;
   onSteerQueuedPrompt?: (item: QueuedComposerPrompt) => void;
+  onClearGoal?: () => void;
+  onSaveGoal?: (objective: string) => void;
+  onToggleGoalPause?: () => void;
   queuedPrompts: QueuedComposerPrompt[];
   rateLimitBuckets: RateLimitBucket[];
   pendingInputRequest?: PendingInputRequest;
@@ -191,6 +200,7 @@ export function ChatShell({
                 collaborationMode={collaborationMode}
                 composerThreadId={threadId}
                 contextWindowUsage={contextWindowUsage}
+                goal={goal}
                 disabled={composerDisabled}
                 disabledPlaceholder={composerDisabledPlaceholder}
                 inputEditable={composerInputEditable}
@@ -212,6 +222,9 @@ export function ChatShell({
                 onRestoreQueuedPrompt={onRestoreQueuedPrompt}
                 onSend={onSend}
                 onSteerQueuedPrompt={onSteerQueuedPrompt}
+                onClearGoal={onClearGoal}
+                onSaveGoal={onSaveGoal}
+                onToggleGoalPause={onToggleGoalPause}
                 onQueuedPromptPanelHeightChange={handleQueuedPromptPanelHeightChange}
                 planConfirmationId={implementablePlanMessageId}
                 pendingInputRequest={pendingInputRequest}

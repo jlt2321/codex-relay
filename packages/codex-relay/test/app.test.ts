@@ -1583,6 +1583,139 @@ describe("Codex Relay server routes", () => {
     });
   });
 
+  it("reads an app-server thread goal", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const now = Date.now() / 1000;
+    const appThread = {
+      id: "app-thread-goal",
+      preview: "Thread with goal",
+      createdAt: now,
+      updatedAt: now,
+      status: { type: "idle" },
+      cwd: workspacePath,
+      source: "app",
+      modelProvider: "openai",
+      name: "Thread with goal",
+      turns: [],
+    };
+    const appServer = {
+      getThreadGoal: vi.fn<() => Promise<unknown>>(async () => ({
+        threadId: "app-thread-goal",
+        objective: "Ship goal UI",
+        status: "active",
+        tokenBudget: null,
+        tokensUsed: 321,
+        timeUsedSeconds: 42,
+        createdAt: now,
+        updatedAt: now,
+      })),
+      onNotification() {
+        return () => undefined;
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      readThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    const response = await app.request("/v1/threads/app-thread-goal/goal");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(appServer.getThreadGoal).toHaveBeenCalledWith({ threadId: "app-thread-goal" });
+    expect(body).toMatchObject({
+      goal: {
+        objective: "Ship goal UI",
+        status: "active",
+        timeUsedSeconds: 42,
+        tokensUsed: 321,
+      },
+      thread: {
+        goal: {
+          objective: "Ship goal UI",
+          status: "active",
+        },
+        id: "app-thread-goal",
+      },
+    });
+  });
+
+  it("updates and clears an app-server thread goal", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const now = Date.now() / 1000;
+    const appThread = {
+      id: "app-thread-goal-actions",
+      preview: "Thread with editable goal",
+      createdAt: now,
+      updatedAt: now,
+      status: { type: "idle" },
+      cwd: workspacePath,
+      source: "app",
+      modelProvider: "openai",
+      name: "Thread with editable goal",
+      turns: [],
+    };
+    const setThreadGoal = vi.fn<() => Promise<unknown>>(async () => ({
+      threadId: "app-thread-goal-actions",
+      objective: "Updated objective",
+      status: "paused",
+      tokenBudget: null,
+      tokensUsed: 7,
+      timeUsedSeconds: 11,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    const clearThreadGoal = vi.fn<() => Promise<void>>(async () => undefined);
+    const appServer = {
+      clearThreadGoal,
+      onNotification() {
+        return () => undefined;
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      readThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+      setThreadGoal,
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    const updateResponse = await app.request("/v1/threads/app-thread-goal-actions/goal", {
+      method: "POST",
+      body: JSON.stringify({ objective: "Updated objective", status: "paused" }),
+      headers: { "content-type": "application/json" },
+    });
+    const updateBody = await updateResponse.json();
+    const clearResponse = await app.request("/v1/threads/app-thread-goal-actions/goal", {
+      method: "DELETE",
+    });
+    const clearBody = await clearResponse.json();
+
+    expect(updateResponse.status).toBe(200);
+    expect(setThreadGoal).toHaveBeenCalledWith({
+      threadId: "app-thread-goal-actions",
+      objective: "Updated objective",
+      status: "paused",
+      tokenBudget: undefined,
+    });
+    expect(updateBody.thread.goal).toMatchObject({
+      objective: "Updated objective",
+      status: "paused",
+    });
+    expect(clearResponse.status).toBe(200);
+    expect(clearThreadGoal).toHaveBeenCalledWith({ threadId: "app-thread-goal-actions" });
+    expect(clearBody.goal).toBeNull();
+    expect(clearBody.thread.goal).toBeNull();
+  });
+
   it("preserves active state for empty app-server threads", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const now = Date.now() / 1000;
