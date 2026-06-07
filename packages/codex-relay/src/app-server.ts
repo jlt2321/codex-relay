@@ -1,6 +1,8 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface, type Interface } from "node:readline";
 
+import { resolveCodexAppServerSpawn } from "./codex-binary.js";
+
 type JsonRpcServerMessage = {
   id?: number;
   method?: string;
@@ -291,8 +293,11 @@ export class CodexAppServerClient {
   }
 
   private start() {
-    this.child = spawn(resolveCodexBinary(), ["app-server", "--listen", "stdio://"], {
+    const spawnConfig = resolveCodexAppServerSpawn();
+    this.child = spawn(spawnConfig.command, spawnConfig.args, {
       env: process.env,
+      shell: spawnConfig.shell,
+      windowsHide: spawnConfig.windowsHide,
     });
     this.readline = createInterface({ input: this.child.stdout, crlfDelay: Infinity });
     this.readline.on("line", (line) => this.handleLine(line));
@@ -406,10 +411,6 @@ export class CodexAppServerClient {
     }
     this.pending.clear();
   }
-}
-
-function resolveCodexBinary() {
-  return process.env.CODEX_BIN ?? "codex";
 }
 
 function debugAppServer(kind: string, method: string | undefined, id?: number, detail?: string) {
