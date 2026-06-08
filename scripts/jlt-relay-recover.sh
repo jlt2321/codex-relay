@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 
 VPS_IP="${JLT_RELAY_VPS_IP:-43.143.114.214}"
 PUBLIC_URL="${JLT_RELAY_PUBLIC_URL:-http://43.143.114.214:8788}"
@@ -11,6 +12,9 @@ TSX_BIN="${JLT_RELAY_TSX_BIN:-$RELAY_PROJECT_PATH/node_modules/.bin/tsx}"
 FRPC_PLIST="${JLT_RELAY_FRPC_PLIST:-/Users/mormontjiang/Library/LaunchAgents/com.jlt.codex-relay.frpc.plist}"
 TMUX_SESSION="${JLT_RELAY_TMUX_SESSION:-jlt-relay-local}"
 PREVIEW_TMUX_SESSION="${JLT_RELAY_PREVIEW_TMUX_SESSION:-jlt-vite-preview}"
+START_PREVIEW="${JLT_RELAY_START_PREVIEW:-0}"
+TMUX_BIN="${JLT_RELAY_TMUX_BIN:-$(command -v tmux || true)}"
+PNPM_BIN="${JLT_RELAY_PNPM_BIN:-$(command -v pnpm || true)}"
 
 log() {
   printf '==> %s\n' "$*"
@@ -18,6 +22,14 @@ log() {
 
 wifi_gateway() {
   route -n get default 2>/dev/null | awk '/gateway:/ {print $2; exit}'
+}
+
+wifi_iface() {
+  route -n get default 2>/dev/null | awk '/interface:/ {print $2; exit}'
+}
+
+route_gateway_for_vps() {
+  route -n get "$VPS_IP" 2>/dev/null | awk '/gateway:/ {print $2; exit}'
 }
 
 route_iface_for_vps() {
@@ -32,14 +44,18 @@ ensure_vps_route() {
     return 1
   fi
 
+  local iface
+  iface="$(wifi_iface || true)"
   local current_iface
   current_iface="$(route_iface_for_vps || true)"
-  if [[ "$current_iface" == "en0" || "$current_iface" == en* ]]; then
-    log "Route already points $VPS_IP through $current_iface."
+  local current_gateway
+  current_gateway="$(route_gateway_for_vps || true)"
+  if [[ "$current_iface" == "$iface" && "$current_gateway" == "$gateway" ]]; then
+    log "Route already points $VPS_IP through $current_gateway on $current_iface."
     return 0
   fi
 
-  log "Repairing route: $VPS_IP -> $gateway"
+  log "Repairing route: $VPS_IP -> $gateway on $iface (was ${current_gateway:-missing} on ${current_iface:-missing})"
   sudo route -n delete -host "$VPS_IP" >/dev/null 2>&1 || true
   sudo route -n add -host "$VPS_IP" "$gateway" >/dev/null
 }
@@ -57,17 +73,36 @@ ensure_frpc() {
 }
 
 ensure_relay() {
+  if [[ -z "$TMUX_BIN" ]]; then
+    log "tmux not found. Install tmux or set JLT_RELAY_TMUX_BIN."
+    return 1
+  fi
+
   log "Restarting codex-relay in tmux session $TMUX_SESSION."
-  tmux kill-session -t "$TMUX_SESSION" >/dev/null 2>&1 || true
-  tmux new-session -d -s "$TMUX_SESSION" \
-    "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' NODE_ENV=development caffeinate -ims '$TSX_BIN' '$RELAY_CLI_PATH'"
+  "$TMUX_BIN" kill-session -t "$TMUX_SESSION" >/dev/null 2>&1 || true
+  "$TMUX_BIN" new-session -d -s "$TMUX_SESSION" \
+    "cd '$WORKSPACE_PATH'; HOST=127.0.0.1 PORT=$LOCAL_PORT CODEX_RELAY_PUBLIC_URL='$PUBLIC_URL' NODE_ENV=development caffeinate -is '$TSX_BIN' '$RELAY_CLI_PATH'"
 }
 
 ensure_web_preview() {
+  if [[ -z "$TMUX_BIN" ]]; then
+    log "tmux not found. Install tmux or set JLT_RELAY_TMUX_BIN."
+    return 1
+  fi
+  if [[ "$START_PREVIEW" != "1" ]]; then
+    log "Stopping web preview session $PREVIEW_TMUX_SESSION to save power."
+    "$TMUX_BIN" kill-session -t "$PREVIEW_TMUX_SESSION" >/dev/null 2>&1 || true
+    return 0
+  fi
+  if [[ -z "$PNPM_BIN" ]]; then
+    log "pnpm not found. Install pnpm or set JLT_RELAY_PNPM_BIN."
+    return 1
+  fi
+
   log "Restarting web preview in tmux session $PREVIEW_TMUX_SESSION."
-  tmux kill-session -t "$PREVIEW_TMUX_SESSION" >/dev/null 2>&1 || true
-  tmux new-session -d -s "$PREVIEW_TMUX_SESSION" \
-    "cd '$RELAY_PROJECT_PATH'; caffeinate -ims pnpm --filter @codex-relay/mobile dev:workspace-web-preview"
+  "$TMUX_BIN" kill-session -t "$PREVIEW_TMUX_SESSION" >/dev/null 2>&1 || true
+  "$TMUX_BIN" new-session -d -s "$PREVIEW_TMUX_SESSION" \
+    "cd '$RELAY_PROJECT_PATH'; caffeinate -is '$PNPM_BIN' --filter @codex-relay/mobile dev:workspace-web-preview"
 }
 
 verify() {
@@ -85,7 +120,7 @@ verify() {
   printf '\n'
 
   log "QR / pairing output:"
-  tmux capture-pane -pt "$TMUX_SESSION" -S -80 | tail -60
+  "$TMUX_BIN" capture-pane -pt "$TMUX_SESSION" -S -80 | tail -60
 }
 
 ensure_vps_route
