@@ -182,7 +182,7 @@ export function ChatShell({
 
           {banner}
 
-          <PlanProgressBanner progress={planProgress} />
+          <PlanProgressBanner isRunning={isRunning} progress={planProgress} />
 
           <KeyboardGestureArea
             interpolator="ios"

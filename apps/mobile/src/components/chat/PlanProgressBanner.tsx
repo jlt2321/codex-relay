@@ -20,11 +20,42 @@ import {
   type TimelinePlanProgressStepStatus,
 } from "./plan-progress";
 
-export function PlanProgressBanner({ progress }: { progress?: TimelinePlanProgress }) {
+export function PlanProgressBanner({
+  isRunning,
+  progress,
+}: {
+  isRunning?: boolean;
+  progress?: TimelinePlanProgress;
+}) {
   const [isExpanded, setExpanded] = useState(false);
 
-  if (!progress) {
+  if (!progress && !isRunning) {
     return null;
+  }
+
+  if (!progress) {
+    return (
+      <Animated.View entering={FadeIn.duration(160)} style={styles.bannerHost}>
+        <View
+          accessible
+          accessibilityLabel="Codex is working"
+          accessibilityRole="progressbar"
+          style={styles.banner}
+        >
+          <View style={styles.summaryContent}>
+            <ThemedText type="code" style={styles.label}>
+              Plan
+            </ThemedText>
+            <View style={styles.summaryRow}>
+              <PlanProgressMarker status="inProgress" />
+              <ThemedText type="small" numberOfLines={1} style={styles.summaryText}>
+                Working...
+              </ThemedText>
+            </View>
+          </View>
+        </View>
+      </Animated.View>
+    );
   }
 
   const completedStepCount = progress.steps.filter((step) => step.status === "completed").length;
