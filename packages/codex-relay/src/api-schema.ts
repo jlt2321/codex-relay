@@ -1101,7 +1101,7 @@ export function createOpenApiDocument() {
     openapi: "3.1.0",
     info: {
       title: "Codex Relay Local Codex API",
-      version: "1.2.0",
+      version: "1.2.1",
     },
     paths: {
       "/version": {

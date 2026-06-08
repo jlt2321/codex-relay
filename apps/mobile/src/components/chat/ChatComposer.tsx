@@ -318,6 +318,8 @@ export const ChatComposer = memo(function ChatComposer({
   const [skillMentionQuery, setSkillMentionQuery] = useState<string | undefined>();
   const [isVoiceListening, setVoiceListening] = useState(false);
   const [isVoiceStarting, setVoiceStarting] = useState(false);
+  const [isGoalSheetOpen, setGoalSheetOpen] = useState(false);
+  const [goalSheetDraft, setGoalSheetDraft] = useState(goal?.objective ?? "");
   const planDraft = activePlanDraft(panelDraftState, planConfirmationId);
   const inputRequestDraft = activeInputRequestDraft(panelDraftState, pendingInputRequest?.id);
   const planDecision = planDraft.decision;
@@ -341,6 +343,7 @@ export const ChatComposer = memo(function ChatComposer({
     undefined,
   );
   const attachLaunchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const goalSheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const focusRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const isInputEditable = inputEditable ?? !disabled;
@@ -352,6 +355,10 @@ export const ChatComposer = memo(function ChatComposer({
   const canStop = isRunning && !hasMessageContent;
   const showSendButton = !isRunning || hasMessageContent;
   const actionLabel = isRunning ? "Send running input" : "Send";
+  const trimmedGoalSheetDraft = goalSheetDraft.trim();
+  const canSaveGoalSheetDraft = Boolean(
+    trimmedGoalSheetDraft && trimmedGoalSheetDraft !== goal?.objective,
+  );
   const rateLimitRows = visibleRateLimitRows(rateLimitBuckets);
   const isPlanMode = collaborationMode === "plan";
   const shouldShowSkillSuggestions = Boolean(
@@ -431,6 +438,9 @@ export const ChatComposer = memo(function ChatComposer({
       if (attachLaunchTimeoutRef.current) {
         clearTimeout(attachLaunchTimeoutRef.current);
       }
+      if (goalSheetOpenTimeoutRef.current) {
+        clearTimeout(goalSheetOpenTimeoutRef.current);
+      }
       if (ignoredMarkdownChangeTimeoutRef.current) {
         clearTimeout(ignoredMarkdownChangeTimeoutRef.current);
       }
@@ -442,6 +452,12 @@ export const ChatComposer = memo(function ChatComposer({
       } catch {}
     };
   }, []);
+
+  useEffect(() => {
+    if (!isGoalSheetOpen) {
+      setGoalSheetDraft(goal?.objective ?? "");
+    }
+  }, [goal?.objective, isGoalSheetOpen]);
 
   useEffect(() => {
     if (!focusRequestKey || !isInputEditable) {
@@ -524,6 +540,30 @@ export const ChatComposer = memo(function ChatComposer({
   function togglePlanMode() {
     onCollaborationModeChange(isPlanMode ? "default" : "plan");
     closeAddSheet();
+  }
+
+  function openGoalSheet() {
+    hapticSelection();
+    setGoalSheetDraft(goal?.objective ?? "");
+    closeAddSheet();
+    goalSheetOpenTimeoutRef.current = setTimeout(() => {
+      goalSheetOpenTimeoutRef.current = undefined;
+      setGoalSheetOpen(true);
+    }, ATTACH_SHEET_DISMISS_DELAY_MS);
+  }
+
+  function closeGoalSheet() {
+    setGoalSheetOpen(false);
+    setGoalSheetDraft(goal?.objective ?? "");
+  }
+
+  function saveGoalSheetDraft() {
+    if (!trimmedGoalSheetDraft || trimmedGoalSheetDraft === goal?.objective) {
+      closeGoalSheet();
+      return;
+    }
+    onSaveGoal?.(trimmedGoalSheetDraft);
+    closeGoalSheet();
   }
 
   function closeAddSheet() {
@@ -1239,6 +1279,14 @@ export const ChatComposer = memo(function ChatComposer({
       <AppBottomSheet title="Add context" onClose={closeAddSheet} visible={isAddSheetOpen}>
         {renderedFooter}
         <SheetActionRow
+          accessibilityLabel={goal ? "Edit Thread Goal" : "Create Thread Goal"}
+          icon="goal"
+          title="Thread Goal"
+          subtitle={goal ? "Edit the current thread objective" : "Set an objective for this thread"}
+          selected={Boolean(goal)}
+          onPress={openGoalSheet}
+        />
+        <SheetActionRow
           accessibilityLabel="Add photos from library"
           icon="attach"
           title="Photos"
@@ -1287,6 +1335,61 @@ export const ChatComposer = memo(function ChatComposer({
               </View>
             </View>
           )}
+        </View>
+      </AppBottomSheet>
+      <AppBottomSheet
+        expandedSnapPercent={52}
+        title={goal ? "Edit Thread Goal" : "Create Thread Goal"}
+        onClose={closeGoalSheet}
+        scrollable={false}
+        visible={isGoalSheetOpen}
+      >
+        <View style={styles.goalEditSheet}>
+          <AppBottomSheetTextInput
+            autoCapitalize="sentences"
+            autoCorrect
+            cursorColor={theme.text}
+            multiline
+            onChangeText={setGoalSheetDraft}
+            onSubmitEditing={saveGoalSheetDraft}
+            placeholder="Goal objective"
+            placeholderTextColor={theme.textSecondary}
+            returnKeyType="done"
+            selectionColor="rgba(124, 199, 255, 0.28)"
+            style={[
+              styles.goalEditSheetInput,
+              {
+                borderColor: "rgba(255, 255, 255, 0.14)",
+                color: theme.text,
+              },
+            ]}
+            textAlignVertical="top"
+            value={goalSheetDraft}
+          />
+          <View style={styles.goalEditSheetActions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Cancel goal edit"
+              onPress={closeGoalSheet}
+              style={({ pressed }) => [styles.planDismissButton, pressed && styles.pressed]}
+            >
+              <Text style={[styles.goalEditCancelText, { color: theme.textSecondary }]}>
+                Cancel
+              </Text>
+            </Pressable>
+            <Button
+              accessibilityRole="button"
+              accessibilityLabel="Save goal"
+              disabled={!canSaveGoalSheetDraft}
+              onPress={saveGoalSheetDraft}
+              style={[
+                styles.planSubmitButton,
+                !canSaveGoalSheetDraft && styles.goalEditSaveButtonDisabled,
+              ]}
+            >
+              <Text style={styles.planSubmitText}>Save</Text>
+            </Button>
+          </View>
         </View>
       </AppBottomSheet>
     </View>

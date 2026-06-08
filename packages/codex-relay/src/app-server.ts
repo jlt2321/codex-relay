@@ -368,7 +368,7 @@ export class CodexAppServerClient {
       clientInfo: {
         name: "codex-relay",
         title: "Codex Relay Mobile Server",
-        version: "1.2.0",
+        version: "1.2.1",
       },
       capabilities: {
         experimentalApi: true,

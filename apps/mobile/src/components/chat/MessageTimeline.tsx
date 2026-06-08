@@ -404,7 +404,10 @@ export function implementablePlanId(messages: ChatMessage[]) {
 
 function isImplementablePlanMessage(message: ChatMessage) {
   return (
-    message.kind === "plan" && message.state !== "streaming" && Boolean(message.content.trim())
+    message.kind === "plan" &&
+    message.role === "assistant" &&
+    message.state !== "streaming" &&
+    Boolean(message.content.trim())
   );
 }
 

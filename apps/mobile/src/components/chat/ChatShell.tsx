@@ -25,7 +25,9 @@ import { hapticSelection } from "@/lib/haptics";
 import type { QueuedComposerPrompt } from "@/state/chat-store";
 
 import { ChatComposer } from "./ChatComposer";
-import { implementablePlanId, MessageTimeline } from "./MessageTimeline";
+import { MessageTimeline } from "./MessageTimeline";
+import { PlanProgressBanner } from "./PlanProgressBanner";
+import { implementablePlanId, splitTimelinePlanProgress } from "./plan-progress";
 import type { WorkspaceMarkdownPreviewTarget } from "./workspace-preview/markdown-target";
 
 export type ChatShellAction = {
@@ -129,6 +131,10 @@ export function ChatShell({
   const insets = useSafeAreaInsets();
   const [isKeyboardLayoutFrozen, setKeyboardLayoutFrozen] = useState(false);
   const [queuedPromptPanelHeight, setQueuedPromptPanelHeight] = useState(0);
+  const { progress: planProgress, visibleMessages } = useMemo(
+    () => splitTimelinePlanProgress(messages, isRunning),
+    [isRunning, messages],
+  );
   const implementablePlanMessageId = useMemo(
     () => (!isRunning ? implementablePlanId(messages) : undefined),
     [isRunning, messages],
@@ -176,6 +182,8 @@ export function ChatShell({
 
           {banner}
 
+          <PlanProgressBanner progress={planProgress} />
+
           <KeyboardGestureArea
             interpolator="ios"
             style={styles.chatBody}
@@ -186,7 +194,7 @@ export function ChatShell({
                 isLoading={isLoadingMessages}
                 isRunning={isRunning}
                 keyboardLayoutFrozen={isKeyboardLayoutFrozen}
-                messages={messages}
+                messages={visibleMessages}
                 onMessageCopied={onMessageCopied}
                 onOpenMarkdownAttachment={onOpenMarkdownAttachment}
                 onKeyboardDismissRequest={handleTimelineKeyboardDismissRequest}
