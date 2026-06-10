@@ -313,6 +313,17 @@ export function ThreadDrawerContent(props: ThreadDrawerContentProps) {
     threadsById,
     workspacePath,
   });
+  const refreshProjectsRef = useRef(refreshProjects);
+
+  useEffect(() => {
+    refreshProjectsRef.current = refreshProjects;
+  }, [refreshProjects]);
+
+  useEffect(() => {
+    if (drawerStatus === "open") {
+      void refreshProjectsRef.current();
+    }
+  }, [drawerStatus]);
 
   const renderDrawerRow = useCallback(
     ({ item }: LegendListRenderItemProps<DrawerRow>) => (
