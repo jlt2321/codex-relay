@@ -1,5 +1,4 @@
 import "@/global.css";
-import "expo-dev-client";
 import "react-native-gesture-handler";
 
 import { BottomSheetModalProvider } from "@gorhom/bottom-sheet";

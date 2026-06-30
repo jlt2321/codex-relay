@@ -10,6 +10,7 @@ import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import { apiPaths } from "./api-schema.js";
+import { readRunningRelayPid } from "./background-process.js";
 import { createTursoPairingSessionStore } from "./pairing-store.js";
 import { getConnectUrlGuidance } from "./pairing-url-candidates.js";
 
@@ -100,7 +101,7 @@ async function startBackgroundServer() {
   const pidPath = codexRelayDataPath("server.pid");
   await mkdir(dirname(logPath), { recursive: true });
 
-  const existingPid = await readRunningPid(pidPath);
+  const existingPid = await readRunningRelayPid(pidPath);
   if (existingPid) {
     console.log(`codex-relay is already running in the background (pid ${existingPid}).`);
     console.log(`Logs: ${logPath}`);
@@ -144,21 +145,6 @@ async function startBackgroundServer() {
   console.log(`Print the pairing QR later with: ${npxCommand} qr`);
 }
 
-async function readRunningPid(pidPath: string) {
-  const value = await readFile(pidPath, "utf8").catch(() => undefined);
-  const pid = value ? Number(value.trim()) : NaN;
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return undefined;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return pid;
-  } catch {
-    return undefined;
-  }
-}
-
 function backgroundArgs() {
   return process.argv.slice(2).filter((arg) => arg !== "--bg");
 }
@@ -170,7 +156,7 @@ async function waitForBackgroundPid(child: ReturnType<typeof spawn>, pidPath: st
   });
 
   for (let attempt = 0; attempt < 50; attempt += 1) {
-    const pid = await readRunningPid(pidPath);
+    const pid = await readRunningRelayPid(pidPath);
     if (pid) {
       return pid;
     }
@@ -324,7 +310,7 @@ async function clearDebugLogs() {
 }
 
 async function hasRunningBackgroundServer() {
-  return Boolean(await readRunningPid(codexRelayDataPath("server.pid")));
+  return Boolean(await readRunningRelayPid(codexRelayDataPath("server.pid")));
 }
 
 async function pathExists(path: string) {
@@ -388,7 +374,7 @@ async function handleServerStartError(error: unknown) {
 
   const pidPath = codexRelayDataPath("server.pid");
   const logPath = codexRelayDataPath("server.log");
-  const existingPid = await readRunningPid(pidPath);
+  const existingPid = await readRunningRelayPid(pidPath);
   const storedState = await readServerState();
   const state = storedState?.pairingPayload ? storedState : await readServerLogState();
 

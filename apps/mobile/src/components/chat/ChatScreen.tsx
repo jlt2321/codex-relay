@@ -48,6 +48,7 @@ import {
   isPairingQrPayloadError,
   listSkills,
   pairWithQrPayload,
+  pairWithServerUrl,
   refreshSession,
   resolveApproval,
   resolveCodexRelayUrl,
@@ -1082,6 +1083,9 @@ export function ChatScreen() {
         if (wasInactive) {
           detachCurrentStream();
           void refresh();
+          if (activePagerPage === 1) {
+            void loadWorkspaceChanges();
+          }
         }
         return;
       }
@@ -1090,7 +1094,7 @@ export function ChatScreen() {
     });
 
     return () => appStateListener.remove();
-  }, [detachCurrentStream, refresh]);
+  }, [activePagerPage, detachCurrentStream, loadWorkspaceChanges, refresh]);
 
   useEffect(() => {
     if (!activeThreadId || !isRunning || connection !== "connected") {
@@ -1209,6 +1213,43 @@ export function ChatScreen() {
     },
     [queryClient, refresh, syncPairedSessionState],
   );
+
+  const connectPrivateRelay = useCallback(async () => {
+    if (isHandlingPairingLink) {
+      return;
+    }
+
+    isHandlingPairingLink = true;
+    setPastePairing(true);
+    setPasteApprovalCode(undefined);
+    setPasteApprovalServerUrl(undefined);
+    setPastePairOpen(true);
+    try {
+      const pairing = await pairWithServerUrl(undefined, {
+        onApprovalCode(approvalCode, approvalServerUrl) {
+          setPasteApprovalCode(approvalCode);
+          setPasteApprovalServerUrl(approvalServerUrl);
+          setPastePairOpen(true);
+        },
+      });
+      setServerUrl(pairing.serverUrl);
+      clearServerState(queryClient);
+      syncPairedSessionState();
+      setPastePairOpen(false);
+      setPasteApprovalCode(undefined);
+      setPasteApprovalServerUrl(undefined);
+      hapticSuccess();
+      await refresh();
+    } catch (caught) {
+      setPastePairOpen(false);
+      setPasteApprovalCode(undefined);
+      setPasteApprovalServerUrl(undefined);
+      Alert.alert("Pairing failed", pairingFailureAlertMessage(caught));
+    } finally {
+      isHandlingPairingLink = false;
+      setPastePairing(false);
+    }
+  }, [queryClient, refresh, syncPairedSessionState]);
 
   useEffect(() => {
     let isMounted = true;
@@ -2052,6 +2093,7 @@ export function ChatScreen() {
                   serverUrl={serverUrl}
                   workspacePath={workspacePath}
                   onRefresh={refresh}
+                  onPrivateConnect={connectPrivateRelay}
                   onScanConnect={openScanner}
                 />
               </Animated.View>

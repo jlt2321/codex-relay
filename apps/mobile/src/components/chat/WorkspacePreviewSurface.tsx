@@ -176,7 +176,7 @@ export function WorkspacePreviewSurface({
     }
 
     lastGitAutoRefreshRef.current = { at: now, workspaceKey };
-    void onRefreshChanges({ staleTime: GIT_TAB_AUTO_REFRESH_STALE_TIME_MS });
+    void onRefreshChanges();
   }, [activeTab, isFocused, isLoadingChanges, onRefreshChanges, workspaceKey]);
 
   function selectTab(nextTab: WorkspacePreviewTab) {

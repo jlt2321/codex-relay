@@ -14,6 +14,7 @@ import {
   ListThreadsResponseSchema,
   ListWorkspaceFilesResponseSchema,
   ListWorkspaceDirectoriesResponseSchema,
+  PairingPayloadResponseSchema,
   PairResponseSchema,
   QueuedThreadInputActionResponseSchema,
   RateLimitsResponseSchema,
@@ -99,6 +100,12 @@ import {
   parseThreadRunStreamPayload,
   threadRunStreamEventTypes,
 } from "./thread-run-stream";
+import { requestWithNetworkTimeout, withTimeout } from "./network-timeout";
+import {
+  isClientTokenExpiredByInactivity,
+  markInactiveSessionExpired,
+  shouldClearClientSessionForInvalidStatus,
+} from "./session-expiration";
 
 const defaultServerUrl = "http://43.143.114.214:8788";
 const skillsPath = "/v1/skills";
@@ -242,17 +249,31 @@ function isCodexRelayWebPreviewUrl(url: string) {
 }
 
 export function signOutCodexRelaySession() {
-  clearClientSession();
+  clearClientSession("signed-out");
 }
 
 export function hasCodexRelaySession() {
   return Boolean(storage.getString(clientTokenStorageKey));
 }
 
-function clearClientSession() {
+type ClientSessionClearReason = "inactive-expired" | "invalid" | "signed-out";
+
+function clearClientSession(reason: ClientSessionClearReason) {
   storage.remove(clientTokenStorageKey);
   storage.remove(clientTokenExpiresAtStorageKey);
   clearSecureSession();
+  if (reason === "inactive-expired") {
+    markInactiveSessionExpired();
+  }
+}
+
+function clearInvalidClientSession(status: number) {
+  const expiresAt = storage.getString(clientTokenExpiresAtStorageKey);
+  if (!shouldClearClientSessionForInvalidStatus(status, expiresAt)) {
+    return;
+  }
+  const reason = isClientTokenExpiredByInactivity(expiresAt) ? "inactive-expired" : "invalid";
+  clearClientSession(reason);
 }
 
 export async function pairWithQrPayload(
@@ -279,6 +300,28 @@ export async function pairWithQrPayload(
   }
 
   throw new Error(pairingCandidateFailureMessage(connectionErrors));
+}
+
+export async function pairWithServerUrl(
+  serverUrl = fallbackCodexRelayServerUrl,
+  handlers?: { onApprovalCode?: (approvalCode: string, serverUrl: string) => void },
+) {
+  const normalizedServerUrl = normalizeServerUrl(serverUrl);
+  const response = await fetchWithNetworkContext(`${normalizedServerUrl}${apiPaths.pairPayload}`, {
+    headers: {
+      accept: "application/json",
+    },
+    timeoutMs: pairingConnectTimeoutMs,
+  });
+  const responsePayload = await response.json().catch(() => undefined);
+
+      if (!response.ok) {
+    throw new Error(errorMessage(responsePayload, `JLT Relay server returned ${response.status}`));
+  }
+
+  const pairingPayload = PairingPayloadResponseSchema.parse(responsePayload);
+  saveServerUrlCandidates([normalizedServerUrl]);
+  return pairWithQrPayload(pairingPayload.pairingPayload, handlers);
 }
 
 async function pairWithApproval(
@@ -365,7 +408,7 @@ async function fetchWithNetworkContext(url: string, init?: NetworkRequestInit) {
 
   for (const transport of transports) {
     try {
-      return await requestWithOptionalTimeout(
+      return await requestWithNetworkTimeout(
         requestWithTransport(transport, url, init),
         init?.timeoutMs,
       );
@@ -489,9 +532,9 @@ export async function refreshSession() {
   );
   const responsePayload = await response.json().catch(() => undefined);
 
-  if (!response.ok) {
+      if (!response.ok) {
     if (isSessionInvalidStatus(response.status)) {
-      clearClientSession();
+      clearInvalidClientSession(response.status);
     }
     throw new Error(errorMessage(responsePayload, `JLT Relay server returned ${response.status}`));
   }
@@ -914,14 +957,16 @@ export function streamWorkspaceTerminalOutput(
       }
       if (!response.ok) {
         if (isSessionInvalidStatus(response.status)) {
-          clearClientSession();
+          clearInvalidClientSession(response.status);
         }
         void response.text().then((text) => {
           let payload: unknown = text;
           try {
             payload = decryptResponsePayload(JSON.parse(text));
           } catch {}
-          fail(new Error(errorMessage(payload, `Codex Relay server returned ${response.status}`)));
+          fail(
+            new Error(errorMessage(payload, `Codex Relay server returned ${response.status}`)),
+          );
         });
         return;
       }
@@ -1047,7 +1092,7 @@ async function requestNoContent(path: string, init: RequestInit) {
 
   const payload = decryptResponsePayload(await response.json().catch(() => undefined));
   if (isSessionInvalidStatus(response.status)) {
-    clearClientSession();
+    clearInvalidClientSession(response.status);
   }
   const message = errorMessage(payload, `Codex Relay server returned ${response.status}`);
   throw new CodexRelayApiError(message, response.status, errorCode(payload));
@@ -1228,7 +1273,7 @@ function streamThreadRunWithDirectFetch(
       }
       if (!response.ok) {
         if (isSessionInvalidStatus(response.status)) {
-          clearClientSession();
+          clearInvalidClientSession(response.status);
         }
         void response.text().then((text) => {
           let payload: unknown = text;
@@ -1402,7 +1447,7 @@ async function request<T>(
 
   if (!response.ok) {
     if (isSessionInvalidStatus(response.status)) {
-      clearClientSession();
+      clearInvalidClientSession(response.status);
     }
     const message = errorMessage(payload, `Codex Relay server returned ${response.status}`);
     throw new CodexRelayApiError(message, response.status, errorCode(payload));
@@ -1482,17 +1527,6 @@ function errorMessage(payload: unknown, fallback: string) {
     "message" in payload.error
     ? String(payload.error.message)
     : fallback;
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
-  return new Promise<T>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("Request timed out.")), timeoutMs);
-    promise.then(resolve, reject).finally(() => clearTimeout(timeout));
-  });
-}
-
-function requestWithOptionalTimeout<T>(promise: Promise<T>, timeoutMs: number | undefined) {
-  return timeoutMs && timeoutMs > 0 ? withTimeout(promise, timeoutMs) : promise;
 }
 
 function errorCode(payload: unknown) {

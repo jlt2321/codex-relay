@@ -892,6 +892,36 @@ describe("Codex Relay server routes", () => {
     expect(insecurePairing.status).toBe(400);
   });
 
+  it("returns a public secure pairing payload for private mobile shortcuts", async () => {
+    const sessions = await createTursoPairingSessionStore(":memory:");
+    const serverIdentity = createServerIdentity();
+    const app = createApp({
+      codex: createMockCodex(),
+      pairing: {
+        createClientToken: () => "client-token",
+        hashClientToken: (token) => token,
+        serverIdentity,
+        sessions,
+        tokenTtlMs: 60_000,
+      },
+    });
+
+    const response = await app.request("http://127.0.0.1/v1/pair/payload", {
+      headers: {
+        "x-forwarded-host": "43.143.114.214:8788",
+        "x-forwarded-proto": "http",
+      },
+    });
+    const body = await response.json();
+    const payload = new URL(body.pairingPayload);
+
+    expect(response.status).toBe(200);
+    expect(payload.protocol).toBe("codex-relay:");
+    expect(payload.hostname).toBe("pair");
+    expect(payload.searchParams.get("serverUrl")).toBe("http://43.143.114.214:8788");
+    expect(payload.searchParams.get("serverPublicKey")).toBe(serverIdentity.publicKey);
+  });
+
   it("proxies workspace web preview traffic through the relay", async () => {
     const previousPorts = process.env.CODEX_RELAY_WEB_PREVIEW_PORTS;
     const originalFetch = globalThis.fetch;

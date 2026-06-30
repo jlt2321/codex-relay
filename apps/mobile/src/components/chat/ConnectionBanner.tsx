@@ -11,6 +11,7 @@ export function ConnectionBanner({
   connection,
   error,
   hasPairedSession,
+  onPrivateConnect,
   onRefresh,
   onScanConnect,
   serverUrl,
@@ -19,6 +20,7 @@ export function ConnectionBanner({
   connection: "checking" | "connected" | "offline";
   error?: string;
   hasPairedSession: boolean;
+  onPrivateConnect: () => void;
   onRefresh: () => void;
   onScanConnect: () => void;
   serverUrl: string;
@@ -128,15 +130,29 @@ export function ConnectionBanner({
           <View style={styles.pairActions}>
             <Button
               accessibilityRole="button"
-              accessibilityLabel="Scan connection QR"
-              onPress={onScanConnect}
+              accessibilityLabel="Connect to JLT VPS relay"
+              onPress={onPrivateConnect}
               size="lg"
               variant="default"
               className="h-11 rounded-lg"
               style={styles.pairButton}
             >
-              <Icon name="workspace" size={16} tintColor="#141414" />
+              <Icon name="web" size={16} tintColor="#141414" />
               <ThemedText type="smallBold" style={styles.primaryActionText}>
+                Connect JLT VPS
+              </ThemedText>
+            </Button>
+            <Button
+              accessibilityRole="button"
+              accessibilityLabel="Scan connection QR"
+              onPress={onScanConnect}
+              size="lg"
+              variant="outline"
+              className="h-11 rounded-lg"
+              style={styles.pairButton}
+            >
+              <Icon name="workspace" size={16} tintColor="#F2F2F2" />
+              <ThemedText type="smallBold" style={styles.secondaryActionText}>
                 Scan QR
               </ThemedText>
             </Button>
@@ -409,6 +425,11 @@ const styles = StyleSheet.create({
   },
   primaryActionText: {
     color: "#141414",
+    fontSize: 13,
+    lineHeight: 17,
+  },
+  secondaryActionText: {
+    color: "#F2F2F2",
     fontSize: 13,
     lineHeight: 17,
   },

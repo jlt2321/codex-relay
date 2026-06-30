@@ -36,6 +36,12 @@ route_iface_for_vps() {
   route -n get "$VPS_IP" 2>/dev/null | awk '/interface:/ {print $2; exit}'
 }
 
+iface_ipv4() {
+  local iface="$1"
+  [[ -n "$iface" ]] || return 0
+  ifconfig "$iface" 2>/dev/null | awk '/inet / {print $2; exit}'
+}
+
 ensure_vps_route() {
   local gateway
   gateway="$(wifi_gateway)"
@@ -116,7 +122,15 @@ verify() {
   lsof -nP -iTCP:30000 -sTCP:LISTEN || true
 
   log "Public relay check:"
-  curl -i --max-time 8 "$PUBLIC_URL/v1/version" || true
+  local vps_iface
+  vps_iface="$(route_iface_for_vps || true)"
+  local vps_source_ip
+  vps_source_ip="$(iface_ipv4 "$vps_iface")"
+  if [[ -n "$vps_source_ip" ]]; then
+    curl --interface "$vps_source_ip" -i --max-time 8 "$PUBLIC_URL/v1/version" || true
+  else
+    curl -i --max-time 8 "$PUBLIC_URL/v1/version" || true
+  fi
   printf '\n'
 
   log "QR / pairing output:"

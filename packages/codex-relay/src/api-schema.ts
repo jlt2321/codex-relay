@@ -534,6 +534,10 @@ export const PairResponseSchema = z.object({
     .optional(),
 });
 
+export const PairingPayloadResponseSchema = z.object({
+  pairingPayload: z.string().min(1),
+});
+
 export const EncryptedPayloadSchema = z.object({
   ciphertext: z.string().min(1),
   counter: z.number().int().nonnegative(),
@@ -810,6 +814,7 @@ export type RunAutomationRequest = z.infer<typeof RunAutomationRequestSchema>;
 export type RunAutomationResponse = z.infer<typeof RunAutomationResponseSchema>;
 export type PairRequest = z.infer<typeof PairRequestSchema>;
 export type PairResponse = z.infer<typeof PairResponseSchema>;
+export type PairingPayloadResponse = z.infer<typeof PairingPayloadResponseSchema>;
 export type EncryptedPayload = z.infer<typeof EncryptedPayloadSchema>;
 export type PairEncryptedPayload = z.infer<typeof PairEncryptedPayloadSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
@@ -1043,6 +1048,7 @@ export type UpdateWorkspaceFileContentRequest = z.infer<
 export const apiPaths = {
   version: "/version",
   pair: "/v1/pair",
+  pairPayload: "/v1/pair/payload",
   pairApproval: (approvalCode: string) => `/v1/pair/${encodeURIComponent(approvalCode)}`,
   pairApprove: "/v1/pair/approve",
   sessionsClear: "/v1/sessions/clear",

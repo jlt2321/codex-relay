@@ -14,6 +14,7 @@ import {
   ListThreadsResponseSchema,
   ListWorkspaceFilesResponseSchema,
   ListWorkspaceDirectoriesResponseSchema,
+  PairingPayloadResponseSchema,
   PairRequestSchema,
   PairResponseSchema,
   QueuedThreadInputActionResponseSchema,
@@ -66,6 +67,7 @@ import {
   type ListWorkspaceFilesResponse,
   type ListWorkspaceDirectoriesResponse,
   type PairResponse,
+  type PairingPayloadResponse,
   type PendingInputRequest,
   type PendingInputRequestQuestion,
   type PromptAttachment,
@@ -138,6 +140,7 @@ import {
 } from "./codex.js";
 import { readLatestContextWindowUsage } from "./context-window.js";
 import { codexRelayDataPath } from "./paths.js";
+import { createPairingQrPayload } from "./pairing-url-candidates.js";
 import { relayDebugLog } from "./debug-log.js";
 import type { PairingSessionStore } from "./pairing-store.js";
 import {
@@ -407,6 +410,21 @@ export function createApp(options: AppOptions = {}) {
     });
 
     return secureJson(c, options.pairing, secureSessionsByTokenHash, response);
+  });
+
+  app.get(apiPaths.pairPayload, async (c) => {
+    if (!options.pairing?.serverIdentity) {
+      return c.json(apiError("pairing_disabled", "Pairing is not enabled on this server."), 404);
+    }
+
+    const serverUrl = externalRequestOrigin(c.req.url, (name) => c.req.header(name));
+    const response: PairingPayloadResponse = PairingPayloadResponseSchema.parse({
+      pairingPayload: createPairingQrPayload({
+        serverPublicKey: options.pairing.serverIdentity.publicKey,
+        serverUrls: [serverUrl],
+      }),
+    });
+    return c.json(response);
   });
 
   app.post(apiPaths.pair, async (c) => {

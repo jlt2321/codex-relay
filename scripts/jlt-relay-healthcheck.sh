@@ -15,6 +15,7 @@ PUBLIC_TIMEOUT_SECONDS="${JLT_RELAY_PUBLIC_TIMEOUT_SECONDS:-15}"
 LOCAL_TIMEOUT_SECONDS="${JLT_RELAY_LOCAL_TIMEOUT_SECONDS:-5}"
 RECOVER_AFTER_FAILURES="${JLT_RELAY_RECOVER_AFTER_FAILURES:-3}"
 CHECK_PREVIEW="${JLT_RELAY_CHECK_PREVIEW:-0}"
+PUBLIC_REQUIRED="${JLT_RELAY_PUBLIC_REQUIRED:-1}"
 
 mkdir -p "$(dirname "$LOG_PATH")"
 
@@ -25,7 +26,12 @@ log() {
 status_code() {
   local timeout="$1"
   local url="$2"
-  curl -sS -o /dev/null -w '%{http_code}' --max-time "$timeout" "$url" 2>/dev/null || true
+  local source_ip="${3:-}"
+  if [[ -n "$source_ip" ]]; then
+    curl --interface "$source_ip" -sS -o /dev/null -w '%{http_code}' --max-time "$timeout" "$url" 2>/dev/null || true
+  else
+    curl -sS -o /dev/null -w '%{http_code}' --max-time "$timeout" "$url" 2>/dev/null || true
+  fi
 }
 
 read_fail_count() {
@@ -52,6 +58,12 @@ default_gateway() {
   route -n get default 2>/dev/null | awk '/gateway:/ {print $2; exit}'
 }
 
+iface_ipv4() {
+  local iface="$1"
+  [[ -n "$iface" ]] || return 0
+  ifconfig "$iface" 2>/dev/null | awk '/inet / {print $2; exit}'
+}
+
 healthy=true
 reasons=()
 
@@ -61,9 +73,16 @@ if [[ "$local_code" != "200" ]]; then
   reasons+=("local_relay=$local_code")
 fi
 
-public_code="$(status_code "$PUBLIC_TIMEOUT_SECONDS" "$PUBLIC_URL/v1/version")"
+vps_iface="$(route_iface_for_vps || true)"
+vps_gateway="$(route_gateway_for_vps || true)"
+vps_source_ip="$(iface_ipv4 "$vps_iface")"
+
+public_code="$(status_code "$PUBLIC_TIMEOUT_SECONDS" "$PUBLIC_URL/v1/version" "$vps_source_ip")"
 if [[ "$public_code" != "401" && "$public_code" != "200" ]]; then
   reasons+=("public_relay=$public_code")
+  if [[ "$PUBLIC_REQUIRED" == "1" ]]; then
+    healthy=false
+  fi
 fi
 
 preview_code="skipped"
@@ -74,8 +93,6 @@ if [[ "$CHECK_PREVIEW" == "1" ]]; then
   fi
 fi
 
-vps_iface="$(route_iface_for_vps || true)"
-vps_gateway="$(route_gateway_for_vps || true)"
 current_iface="$(default_iface || true)"
 current_gateway="$(default_gateway || true)"
 if [[ -z "$current_iface" || -z "$current_gateway" ]]; then
@@ -89,9 +106,9 @@ fi
 if [[ "$healthy" == true ]]; then
   write_fail_count 0
   if (( ${#reasons[@]} > 0 )); then
-    log "warn noncritical local=$local_code public=$public_code preview=$preview_code route=$vps_gateway/$vps_iface reasons=${reasons[*]}"
+    log "warn noncritical local=$local_code public=$public_code preview=$preview_code route=$vps_gateway/$vps_iface source=${vps_source_ip:-none} reasons=${reasons[*]}"
   else
-    log "ok local=$local_code public=$public_code preview=$preview_code route=$vps_gateway/$vps_iface"
+    log "ok local=$local_code public=$public_code preview=$preview_code route=$vps_gateway/$vps_iface source=${vps_source_ip:-none}"
   fi
   exit 0
 fi
