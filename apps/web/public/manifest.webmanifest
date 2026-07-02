@@ -1,0 +1,10 @@
+{
+  "name": "Codex Relay Web",
+  "short_name": "Relay",
+  "description": "A web companion for a local Codex Relay server.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f6f2",
+  "theme_color": "#f7f6f2",
+  "icons": []
+}

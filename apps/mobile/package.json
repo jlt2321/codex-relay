@@ -108,16 +108,6 @@
     "wrangler": "^4.85.0"
   },
   "expo": {
-    "autolinking": {
-      "ios": {
-        "exclude": [
-          "expo-dev-client",
-          "expo-dev-launcher",
-          "expo-dev-menu",
-          "expo-dev-menu-interface"
-        ]
-      }
-    },
     "install": {
       "exclude": [
         "react-native-keyboard-controller"

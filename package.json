@@ -8,6 +8,7 @@
     "dev:mobile": "pnpm --filter @codex-relay/mobile start",
     "dev:mobile:android": "pnpm --filter @codex-relay/mobile android",
     "dev:mobile:ios": "pnpm --filter @codex-relay/mobile ios",
+    "dev:web": "pnpm --filter @codex-relay/web dev",
     "dev:relay": "node scripts/relay-watchdog.mjs",
     "dev:server:watchdog": "node scripts/relay-watchdog.mjs",
     "dev:server": "pnpm --filter codex-relay dev",

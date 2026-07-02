@@ -18,6 +18,10 @@ function isDevClientEnabled() {
   const buildProfile = process.env.EAS_BUILD_PROFILE;
   const appEnv = process.env.APP_VARIANT ?? process.env.EXPO_PUBLIC_APP_ENV;
 
+  if (!buildProfile && !appEnv) {
+    return true;
+  }
+
   return buildProfile === "development" || appEnv === "development";
 }
 
