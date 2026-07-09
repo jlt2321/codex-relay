@@ -1,7 +1,8 @@
 import { platform as currentPlatform } from "node:os";
 import { extname } from "node:path";
 
-const appServerArgs = ["app-server", "--listen", "stdio://"] as const;
+const appServerProxyArgs = ["app-server", "proxy"] as const;
+const appServerStdioArgs = ["app-server", "--listen", "stdio://"] as const;
 const windowsShellExtensions = new Set([".bat", ".cmd"]);
 
 type CodexSpawnPlatform = NodeJS.Platform;
@@ -27,10 +28,23 @@ export function resolveCodexAppServerSpawn(
 
   return {
     command,
-    args: [...appServerArgs],
+    args: resolveAppServerArgs(input.env ?? process.env),
     shell: isWindows && shouldUseWindowsShell(command),
     windowsHide: isWindows,
   };
+}
+
+function resolveAppServerArgs(env: NodeJS.ProcessEnv) {
+  if (env.CODEX_RELAY_APP_SERVER_MODE?.trim() === "stdio") {
+    return [...appServerStdioArgs];
+  }
+
+  const args: string[] = [...appServerProxyArgs];
+  const socketPath = env.CODEX_RELAY_APP_SERVER_SOCK?.trim();
+  if (socketPath) {
+    args.push("--sock", socketPath);
+  }
+  return args;
 }
 
 function resolveCodexBinary(env: NodeJS.ProcessEnv) {
