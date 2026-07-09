@@ -111,7 +111,6 @@ type ThreadDrawerContentProps = Parameters<
 type ThreadDrawerNavigation = ThreadDrawerContentProps["navigation"];
 
 const collapsedProjectThreadCount = 5;
-const drawerListContainerPoolRatio = 1;
 const drawerListDrawDistance = 96;
 const drawerRowEstimatedSize = 40;
 const drawerListIdleTimeoutMs = 180;
@@ -386,8 +385,6 @@ export function ThreadDrawerContent(props: ThreadDrawerContentProps) {
           data={rows}
           drawDistance={drawerListDrawDistance}
           estimatedItemSize={drawerRowEstimatedSize}
-          getEstimatedItemSize={getEstimatedDrawerRowSize}
-          initialContainerPoolRatio={drawerListContainerPoolRatio}
           keyboardShouldPersistTaps="handled"
           keyExtractor={(item) => item.id}
           ListEmptyComponent={emptyList}
@@ -1335,10 +1332,6 @@ function indexThreadsById(threads: ThreadSummary[]) {
     threadsById[thread.id] = thread;
   }
   return threadsById;
-}
-
-function getEstimatedDrawerRowSize(row: DrawerRow) {
-  return row.kind === "thread" ? 44 : 32;
 }
 
 function getDrawerStatus(state: ThreadDrawerContentProps["state"]) {

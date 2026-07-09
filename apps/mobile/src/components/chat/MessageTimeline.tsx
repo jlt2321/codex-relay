@@ -34,18 +34,7 @@ import type { WorkspaceMarkdownPreviewTarget } from "./workspace-preview/markdow
 
 type KeyboardListScrollViewProps = ScrollViewProps & KeyboardChatScrollViewProps;
 
-const MESSAGE_CONTAINER_POOL_RATIO = 8;
-const MESSAGE_ESTIMATED_ITEM_SIZE = 48;
-const META_MESSAGE_ESTIMATED_ITEM_SIZE = 36;
-const USER_MESSAGE_ESTIMATED_ITEM_SIZE = 52;
-const USER_MESSAGE_IMAGE_ESTIMATED_SIZE = 178;
-const MESSAGE_DOCUMENT_ESTIMATED_ITEM_SIZE = 74;
-const PROTOCOL_MESSAGE_ESTIMATED_ITEM_SIZE = 76;
-const FILE_CHANGE_MESSAGE_ESTIMATED_ITEM_SIZE = 96;
-const PLAN_MESSAGE_ESTIMATED_ITEM_SIZE = 160;
-const ASSISTANT_LINE_HEIGHT = 21;
-const ASSISTANT_ESTIMATED_CHARS_PER_LINE = 38;
-const ASSISTANT_MAX_ESTIMATED_ITEM_SIZE = 900;
+const MESSAGE_ESTIMATED_ITEM_SIZE = 76;
 const RUNNING_PULSE_HALF_DURATION_MS = 760;
 const RUNNING_DOT_STAGGER_MS = RUNNING_PULSE_HALF_DURATION_MS / 3;
 const MAINTAIN_SCROLL_AT_END: MaintainScrollAtEndOptions = {
@@ -207,9 +196,7 @@ export function MessageTimeline({
               alignItemsAtEnd
               data={rows}
               estimatedItemSize={MESSAGE_ESTIMATED_ITEM_SIZE}
-              getEstimatedItemSize={estimateMessageItemSize}
               getItemType={messageItemType}
-              initialContainerPoolRatio={MESSAGE_CONTAINER_POOL_RATIO}
               initialScrollAtEnd
               keyExtractor={messageKeyExtractor}
               renderItem={renderMessage}
@@ -274,116 +261,6 @@ function LoadingConversation() {
       </ThemedText>
     </View>
   );
-}
-
-function estimateMessageItemSize(message: ChatMessage) {
-  if (message.kind === "plan") {
-    return PLAN_MESSAGE_ESTIMATED_ITEM_SIZE;
-  }
-
-  if (message.kind === "fileChange") {
-    const changes = Array.isArray(message.details?.changes) ? message.details.changes.length : 1;
-    return FILE_CHANGE_MESSAGE_ESTIMATED_ITEM_SIZE + Math.max(1, changes) * 38;
-  }
-
-  if (message.role === "status" || message.role === "tool" || message.role === "reasoning") {
-    return META_MESSAGE_ESTIMATED_ITEM_SIZE;
-  }
-
-  if (message.kind !== "chat" && message.kind !== "unknown") {
-    return PROTOCOL_MESSAGE_ESTIMATED_ITEM_SIZE;
-  }
-
-  if (message.role === "user") {
-    return (
-      USER_MESSAGE_ESTIMATED_ITEM_SIZE + estimateAttachmentItemSize(message.details?.attachments)
-    );
-  }
-
-  if (message.role === "assistant") {
-    const attachmentSize = estimateAttachmentItemSize(message.details?.attachments);
-    const estimatedLines = Math.max(
-      1,
-      Math.ceil((message.content || " ").length / ASSISTANT_ESTIMATED_CHARS_PER_LINE),
-    );
-    return (
-      attachmentSize +
-      Math.min(
-        ASSISTANT_MAX_ESTIMATED_ITEM_SIZE,
-        MESSAGE_ESTIMATED_ITEM_SIZE + estimatedLines * ASSISTANT_LINE_HEIGHT,
-      )
-    );
-  }
-
-  return MESSAGE_ESTIMATED_ITEM_SIZE;
-}
-
-function estimateAttachmentItemSize(value: unknown) {
-  const imageCount = messageImageAttachmentCount(value);
-  const documentCount = messageDocumentAttachmentCount(value);
-  const imageRows = imageCount > 0 ? Math.ceil(Math.min(imageCount, 3) / 2) : 0;
-  return (
-    imageRows * USER_MESSAGE_IMAGE_ESTIMATED_SIZE +
-    documentCount * MESSAGE_DOCUMENT_ESTIMATED_ITEM_SIZE
-  );
-}
-
-function messageImageAttachmentCount(value: unknown) {
-  if (!Array.isArray(value)) {
-    return 0;
-  }
-
-  return value.filter((attachment) => {
-    if (!attachment || typeof attachment !== "object") {
-      return false;
-    }
-    return isImageAttachment(attachment);
-  }).length;
-}
-
-function messageDocumentAttachmentCount(value: unknown) {
-  if (!Array.isArray(value)) {
-    return 0;
-  }
-
-  return value.filter((attachment) => {
-    if (!attachment || typeof attachment !== "object" || isImageAttachment(attachment)) {
-      return false;
-    }
-    const type = attachmentStringValue(attachment, "type")?.toLowerCase();
-    const mimeType = attachmentStringValue(attachment, "mimeType")?.toLowerCase();
-    const name = attachmentStringValue(attachment, "name");
-    const path = attachmentStringValue(attachment, "path");
-    const url = attachmentStringValue(attachment, "url");
-    return (
-      type === "document" ||
-      type === "file" ||
-      type === "localfile" ||
-      mimeType === "text/markdown" ||
-      mimeType === "text/x-markdown" ||
-      mimeType === "application/markdown" ||
-      Boolean((name ?? path ?? url ?? "").match(/\.(md|mdx|markdown)(?:\?|$)/i))
-    );
-  }).length;
-}
-
-function isImageAttachment(attachment: object) {
-  const type = attachmentStringValue(attachment, "type")?.toLowerCase();
-  const mimeType = attachmentStringValue(attachment, "mimeType")?.toLowerCase();
-  const name = attachmentStringValue(attachment, "name");
-  const path = attachmentStringValue(attachment, "path");
-  const url = attachmentStringValue(attachment, "url");
-  return (
-    type === "image" ||
-    Boolean(mimeType?.startsWith("image/")) ||
-    Boolean(url?.startsWith("data:image/")) ||
-    Boolean((name ?? path ?? url ?? "").match(/\.(gif|heic|heif|jpe?g|png|webp)(?:\?|$)/i))
-  );
-}
-
-function attachmentStringValue(attachment: object, key: string) {
-  const value = (attachment as Record<string, unknown>)[key];
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 export function implementablePlanId(messages: ChatMessage[]) {

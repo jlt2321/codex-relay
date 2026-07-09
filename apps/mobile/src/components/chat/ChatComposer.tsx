@@ -25,12 +25,7 @@ import {
   type Ref,
 } from "react";
 import { Alert, Pressable, TextInput, View, type LayoutChangeEvent } from "react-native";
-import {
-  EnrichedMarkdownTextInput,
-  type EnrichedMarkdownTextInputInstance,
-  type MarkdownStyle,
-  type MarkdownTextInputStyle,
-} from "react-native-enriched-markdown";
+import { type MarkdownStyle } from "react-native-enriched-markdown";
 import { KeyboardController, useKeyboardState } from "react-native-keyboard-controller";
 import Animated, {
   Easing,
@@ -79,12 +74,6 @@ const SPEECH_RECOGNITION_LOCALE = "zh-CN";
 const SUGGESTION_ROW_ESTIMATED_SIZE = 44;
 const SUGGESTION_LIST_GAP = 2;
 const SUGGESTION_LIST_MAX_HEIGHT = 270;
-const MENTION_INPUT_MARKDOWN_STYLE = {
-  link: {
-    color: "#7CC7FF",
-    underline: false,
-  },
-} satisfies MarkdownTextInputStyle;
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 type PlanDecision = "context" | "implement";
@@ -304,6 +293,7 @@ export const ChatComposer = memo(function ChatComposer({
     () => chatStore$.composerSkillsByThreadId[composerKey].get() ?? [],
   );
   const value = useSelector(() => chatStore$.composerDraftByThreadId[composerKey].get() ?? "");
+  const [displayValue, setDisplayValue] = useState(() => markdownToPlainText(value));
   const [isAddSheetOpen, setAddSheetOpen] = useState(false);
   const [isAttachLaunchPending, setAttachLaunchPending] = useState(false);
   const [dismissedPlanConfirmationId, setDismissedPlanConfirmationId] = useState<
@@ -329,19 +319,15 @@ export const ChatComposer = memo(function ChatComposer({
   const inputRequestQuestionIndex = inputRequestDraft.questionIndex;
   const isInputRequestFreeformSelected = inputRequestDraft.freeformSelected;
   const selectedInputOption = inputRequestDraft.selectedOption;
-  const inputRef = useRef<EnrichedMarkdownTextInputInstance | null>(null);
+  const inputRef = useRef<TextInput | null>(null);
   const isInputFocusedRef = useRef(false);
   const lastInputFocusAtRef = useRef(0);
   const previousFocusRecoveryKeyRef = useRef(focusRecoveryKey);
   const fileMentionRangesRef = useRef<FileMentionRange[]>([]);
   const skillMentionRangesRef = useRef<SkillMentionRange[]>([]);
-  const nativeDraftRef = useRef(value);
-  const nativeMarkdownRef = useRef(value);
+  const nativeDraftRef = useRef(markdownToPlainText(value));
+  const nativeMarkdownRef = useRef<string | undefined>(undefined);
   const speechBaseMarkdownRef = useRef(value);
-  const ignoredMarkdownChangeRef = useRef<string | undefined>(undefined);
-  const ignoredMarkdownChangeTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
   const attachLaunchTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const goalSheetOpenTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const focusRecoveryTimeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -390,7 +376,6 @@ export const ChatComposer = memo(function ChatComposer({
     }),
     [isPlanMode, theme.text],
   );
-  const inputMarkdownStyle = MENTION_INPUT_MARKDOWN_STYLE;
   const shouldShowPlanConfirmation = Boolean(
     planConfirmationId &&
     planConfirmationId !== dismissedPlanConfirmationId &&
@@ -440,9 +425,6 @@ export const ChatComposer = memo(function ChatComposer({
       }
       if (goalSheetOpenTimeoutRef.current) {
         clearTimeout(goalSheetOpenTimeoutRef.current);
-      }
-      if (ignoredMarkdownChangeTimeoutRef.current) {
-        clearTimeout(ignoredMarkdownChangeTimeoutRef.current);
       }
       if (focusRecoveryTimeoutRef.current) {
         clearTimeout(focusRecoveryTimeoutRef.current);
@@ -502,22 +484,17 @@ export const ChatComposer = memo(function ChatComposer({
       return;
     }
     const markdownMentions = skillMentionsFromMarkdown(value, [...selectedSkills, ...skills]);
+    const fileMentions = fileMentionsFromMarkdown(value);
     const restoredRanges =
       markdownMentions.ranges.length > 0
         ? markdownMentions.ranges
         : skillMentionRangesFromDraft(value, selectedSkills);
-    const plainValue = markdownMentions.ranges.length > 0 ? markdownToPlainText(value) : value;
+    const plainValue = markdownToPlainText(value);
     nativeDraftRef.current = plainValue;
     nativeMarkdownRef.current = value;
     skillMentionRangesRef.current = restoredRanges;
-    const inputMarkdown =
-      markdownMentions.ranges.length > 0
-        ? value
-        : restoredRanges.length > 0
-          ? markdownFromDraftWithMentions(plainValue, restoredRanges, fileMentionRangesRef.current)
-          : value;
-    ignoreNextProgrammaticMarkdownChange(inputMarkdown);
-    inputRef.current?.setValue(inputMarkdown);
+    fileMentionRangesRef.current = fileMentions;
+    setDisplayValue(plainValue);
     if (!value) {
       setFileMentionQuery(undefined);
       setSkillMentionQuery(undefined);
@@ -625,10 +602,12 @@ export const ChatComposer = memo(function ChatComposer({
   function applyComposerMarkdown(markdown: string) {
     const skillMentions = skillMentionsFromMarkdown(markdown, [...selectedSkills, ...skills]);
     const nextFileRanges = fileMentionsFromMarkdown(markdown);
+    const plainValue = markdownToPlainText(markdown);
     nativeMarkdownRef.current = markdown;
-    nativeDraftRef.current = markdownToPlainText(markdown);
+    nativeDraftRef.current = plainValue;
     skillMentionRangesRef.current = skillMentions.ranges;
     fileMentionRangesRef.current = nextFileRanges;
+    setDisplayValue(plainValue);
     if (
       skillMentions.skills.length > 0 &&
       !sameSkillSelection(selectedSkills, skillMentions.skills)
@@ -636,12 +615,10 @@ export const ChatComposer = memo(function ChatComposer({
       setComposerSkills(skillMentions.skills, composerThreadId);
     }
     setComposerDraft(markdown, composerThreadId);
-    ignoreNextProgrammaticMarkdownChange(markdown);
-    inputRef.current?.setValue(markdown);
-    const cursor = markdownToPlainText(markdown).length;
+    const cursor = plainValue.length;
     requestAnimationFrame(() => {
       setInputSelection({ end: cursor, start: cursor });
-      inputRef.current?.setSelection(cursor, cursor);
+      setTextInputSelection(inputRef.current, cursor);
     });
   }
 
@@ -739,15 +716,14 @@ export const ChatComposer = memo(function ChatComposer({
     nativeDraftRef.current = nextDraft;
     nativeMarkdownRef.current = skillMarkdown;
     skillMentionRangesRef.current = nextRanges;
+    setDisplayValue(nextDraft);
     setComposerDraft(skillMarkdown, composerThreadId);
     setComposerSkills(nextSkills, composerThreadId);
     setSkillMentionQuery(undefined);
-    ignoreNextProgrammaticMarkdownChange(skillMarkdown);
-    inputRef.current?.setValue(skillMarkdown);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       setInputSelection({ end: cursor, start: cursor });
-      inputRef.current?.setSelection(cursor, cursor);
+      setTextInputSelection(inputRef.current, cursor);
     });
   }
 
@@ -782,14 +758,13 @@ export const ChatComposer = memo(function ChatComposer({
     nativeDraftRef.current = nextDraft;
     nativeMarkdownRef.current = markdown;
     fileMentionRangesRef.current = nextRanges;
+    setDisplayValue(nextDraft);
     setComposerDraft(markdown, composerThreadId);
     setFileMentionQuery(undefined);
-    ignoreNextProgrammaticMarkdownChange(markdown);
-    inputRef.current?.setValue(markdown);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       setInputSelection({ end: cursor, start: cursor });
-      inputRef.current?.setSelection(cursor, cursor);
+      setTextInputSelection(inputRef.current, cursor);
     });
   }
 
@@ -813,30 +788,15 @@ export const ChatComposer = memo(function ChatComposer({
     nativeDraftRef.current = draft;
     skillMentionRangesRef.current = nextRanges;
     fileMentionRangesRef.current = nextFileRanges;
+    nativeMarkdownRef.current = markdownFromDraftWithMentions(draft, nextRanges, nextFileRanges);
+    setDisplayValue(draft);
+    setComposerDraft(nativeMarkdownRef.current, composerThreadId);
     setComposerSkills(
       uniqueSkills(nextRanges.map((candidate) => candidate.skill)),
       composerThreadId,
     );
     setFileMentionQuery(activeFileMentionQuery(draft, inputSelection));
     setSkillMentionQuery(activeSkillMentionQuery(draft, inputSelection, nextRanges));
-  }
-
-  function handleInputMarkdownChange(markdown: string) {
-    if (ignoredMarkdownChangeRef.current) {
-      if (markdown === ignoredMarkdownChangeRef.current) {
-        ignoredMarkdownChangeRef.current = undefined;
-        if (ignoredMarkdownChangeTimeoutRef.current) {
-          clearTimeout(ignoredMarkdownChangeTimeoutRef.current);
-          ignoredMarkdownChangeTimeoutRef.current = undefined;
-        }
-        return;
-      }
-      ignoredMarkdownChangeRef.current = undefined;
-    }
-    nativeMarkdownRef.current = markdown;
-    syncFileMentionsFromMarkdown(markdown);
-    syncSkillMentionsFromMarkdown(markdown);
-    setComposerDraft(markdown, composerThreadId);
   }
 
   function handleInputSelectionChange(selection: { end: number; start: number }) {
@@ -917,16 +877,15 @@ export const ChatComposer = memo(function ChatComposer({
       fileMentionRangesRef.current,
     );
     skillMentionRangesRef.current = nextRanges;
+    setDisplayValue(nextDraft);
     setComposerDraft(nativeMarkdownRef.current, composerThreadId);
     setComposerSkills(
       uniqueSkills(nextRanges.map((candidate) => candidate.skill)),
       composerThreadId,
     );
-    ignoreNextProgrammaticMarkdownChange(nativeMarkdownRef.current);
-    inputRef.current?.setValue(nativeMarkdownRef.current);
     requestAnimationFrame(() => {
       setInputSelection({ end: range.start, start: range.start });
-      inputRef.current?.setSelection(range.start, range.start);
+      setTextInputSelection(inputRef.current, range.start);
     });
   }
 
@@ -965,64 +924,16 @@ export const ChatComposer = memo(function ChatComposer({
       nextRanges,
     );
     fileMentionRangesRef.current = nextRanges;
+    setDisplayValue(nextDraft);
     setComposerDraft(nativeMarkdownRef.current, composerThreadId);
-    ignoreNextProgrammaticMarkdownChange(nativeMarkdownRef.current);
-    inputRef.current?.setValue(nativeMarkdownRef.current);
     requestAnimationFrame(() => {
       setInputSelection({ end: range.start, start: range.start });
-      inputRef.current?.setSelection(range.start, range.start);
+      setTextInputSelection(inputRef.current, range.start);
     });
   }
 
-  function syncFileMentionsFromMarkdown(markdown: string) {
-    const ranges = fileMentionsFromMarkdown(markdown);
-    if (ranges.length < fileMentionRangesRef.current.length) {
-      return;
-    }
-    fileMentionRangesRef.current = ranges;
-  }
-
-  function syncSkillMentionsFromMarkdown(markdown: string, extraSkills: AgentSkill[] = []) {
-    const mentions = skillMentionsFromMarkdown(markdown, [
-      ...selectedSkills,
-      ...skills,
-      ...extraSkills,
-    ]);
-    if (mentions.ranges.length < skillMentionRangesRef.current.length) {
-      return;
-    }
-    skillMentionRangesRef.current = mentions.ranges;
-    const nextSkills = mentions.skills;
-    if (sameSkillSelection(selectedSkills, nextSkills)) {
-      return;
-    }
-    setComposerSkills(nextSkills, composerThreadId);
-  }
-
-  function ignoreNextProgrammaticMarkdownChange(markdown: string) {
-    ignoredMarkdownChangeRef.current = markdown;
-    if (ignoredMarkdownChangeTimeoutRef.current) {
-      clearTimeout(ignoredMarkdownChangeTimeoutRef.current);
-    }
-    ignoredMarkdownChangeTimeoutRef.current = setTimeout(() => {
-      if (ignoredMarkdownChangeRef.current === markdown) {
-        ignoredMarkdownChangeRef.current = undefined;
-      }
-      ignoredMarkdownChangeTimeoutRef.current = undefined;
-    }, 250);
-  }
-
   async function currentInputMarkdown() {
-    const fallbackMarkdown = nativeMarkdownRef.current || value;
-    try {
-      const markdown = await inputRef.current?.getMarkdown();
-      if (!markdown) {
-        return fallbackMarkdown;
-      }
-      return richerSkillMarkdown(markdown, fallbackMarkdown, [...skills, ...selectedSkills]);
-    } catch {
-      return fallbackMarkdown;
-    }
+    return nativeMarkdownRef.current || value;
   }
 
   function hydrateMentionRefsFromMarkdown(markdown: string, extraSkills: AgentSkill[] = []) {
@@ -1031,6 +942,7 @@ export const ChatComposer = memo(function ChatComposer({
     nativeMarkdownRef.current = markdown;
     nativeDraftRef.current = markdownToPlainText(markdown);
     skillMentionRangesRef.current = mentions.ranges;
+    setDisplayValue(nativeDraftRef.current);
     if (!sameSkillSelection(selectedSkills, mentions.skills) && mentions.skills.length > 0) {
       setComposerSkills(mentions.skills, composerThreadId);
     }
@@ -1152,22 +1064,23 @@ export const ChatComposer = memo(function ChatComposer({
           },
         ]}
       >
-        <EnrichedMarkdownTextInput
+        <TextInput
+          allowFontScaling={false}
           autoCapitalize="sentences"
+          autoCorrect
           cursorColor={theme.text}
-          defaultValue={value}
           editable={isInputEditable}
-          markdownStyle={inputMarkdownStyle}
+          maxFontSizeMultiplier={1}
+          multiline
           onBlur={() => {
             isInputFocusedRef.current = false;
           }}
-          onChangeMarkdown={handleInputMarkdownChange}
-          onChangeSelection={handleInputSelectionChange}
           onChangeText={handleInputTextChange}
           onFocus={() => {
             isInputFocusedRef.current = true;
             lastInputFocusAtRef.current = Date.now();
           }}
+          onSelectionChange={(event) => handleInputSelectionChange(event.nativeEvent.selection)}
           ref={inputRef}
           placeholder={
             !isInputEditable
@@ -1180,6 +1093,7 @@ export const ChatComposer = memo(function ChatComposer({
           scrollEnabled
           selectionColor="rgba(142, 199, 255, 0.34)"
           style={inputStyle}
+          value={displayValue}
         />
         {isPlanMode ? (
           <Pressable
@@ -1454,7 +1368,7 @@ const SkillSuggestionPanel = memo(function SkillSuggestionPanel({
           contentContainerStyle={styles.skillListContent}
           data={skills}
           estimatedItemSize={SUGGESTION_ROW_ESTIMATED_SIZE}
-          getEstimatedItemSize={getSuggestionRowSize}
+          getFixedItemSize={() => SUGGESTION_ROW_ESTIMATED_SIZE}
           keyExtractor={skillSuggestionKeyExtractor}
           keyboardShouldPersistTaps="always"
           nestedScrollEnabled
@@ -1561,7 +1475,7 @@ const FileSuggestionPanel = memo(function FileSuggestionPanel({
           contentContainerStyle={styles.skillListContent}
           data={files}
           estimatedItemSize={SUGGESTION_ROW_ESTIMATED_SIZE}
-          getEstimatedItemSize={getSuggestionRowSize}
+          getFixedItemSize={() => SUGGESTION_ROW_ESTIMATED_SIZE}
           keyExtractor={fileSuggestionKeyExtractor}
           keyboardShouldPersistTaps="always"
           nestedScrollEnabled
@@ -1620,10 +1534,6 @@ const FileSuggestionRow = memo(function FileSuggestionRow({
     </Pressable>
   );
 });
-
-function getSuggestionRowSize() {
-  return SUGGESTION_ROW_ESTIMATED_SIZE;
-}
 
 function suggestionListHeight(count: number) {
   const rowHeight = count * SUGGESTION_ROW_ESTIMATED_SIZE;
@@ -2995,26 +2905,6 @@ function safeDecodeMarkdownUrl(value: string) {
   }
 }
 
-function richerSkillMarkdown(
-  candidateMarkdown: string,
-  fallbackMarkdown: string,
-  availableSkills: AgentSkill[],
-) {
-  const candidateMentions = skillMentionsFromMarkdown(candidateMarkdown, availableSkills);
-  const fallbackMentions = skillMentionsFromMarkdown(fallbackMarkdown, availableSkills);
-  if (fallbackMentions.ranges.length > candidateMentions.ranges.length) {
-    return fallbackMarkdown;
-  }
-  if (
-    fallbackMentions.ranges.length === candidateMentions.ranges.length &&
-    fallbackMarkdown.length > candidateMarkdown.length &&
-    fallbackMentions.ranges.length > 0
-  ) {
-    return fallbackMarkdown;
-  }
-  return candidateMarkdown;
-}
-
 function fileMentionLinkParts(url: string) {
   const result: { kind?: "directory" | "file"; path?: string } = {};
   const match = /^file:\/\/([^?]*)(?:\?(.*))?$/.exec(url);
@@ -3043,6 +2933,10 @@ function markdownToPlainText(markdown: string) {
       unescapeMarkdownText(linkText),
     )
     .replace(/\\([\\[\]])/g, "$1");
+}
+
+function setTextInputSelection(input: TextInput | null, cursor: number) {
+  input?.setNativeProps({ selection: { end: cursor, start: cursor } });
 }
 
 function formatGoalElapsed(totalSeconds: number) {

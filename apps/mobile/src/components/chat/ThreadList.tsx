@@ -7,7 +7,6 @@ import { StyleSheet } from "react-native-unistyles";
 import { ThemedText } from "@/components/themed-text";
 import { Spacing } from "@/constants/theme";
 
-const THREAD_CONTAINER_POOL_RATIO = 3;
 const THREAD_ITEM_WIDTH = 190;
 const THREAD_ITEM_ESTIMATED_SIZE = THREAD_ITEM_WIDTH + Spacing.two;
 
@@ -39,7 +38,6 @@ export function ThreadList({
         keyExtractor={threadKeyExtractor}
         estimatedItemSize={THREAD_ITEM_ESTIMATED_SIZE}
         getFixedItemSize={() => THREAD_ITEM_ESTIMATED_SIZE}
-        initialContainerPoolRatio={THREAD_CONTAINER_POOL_RATIO}
         recycleItems={false}
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.content}

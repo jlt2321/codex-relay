@@ -42,6 +42,7 @@ const SHIKI_CODE_BLOCK_LINE_HEIGHT = 16;
 const SHIKI_MAX_HIGHLIGHT_LENGTH = 8000;
 const SHIKI_THEME = "github-dark-default";
 const SHIKI_FALLBACK_LANGUAGE = "text";
+const SOFT_WRAP_BREAK = "\u200B";
 const MARKDOWN_ATTACHMENT_EXTENSIONS = new Set(["markdown", "md", "mdx"]);
 const IMAGE_ATTACHMENT_EXTENSIONS = new Set(["gif", "heic", "heif", "jpg", "jpeg", "png", "webp"]);
 const SHIKI_LANGUAGE_BY_ALIAS: Record<string, keyof typeof bundledLanguages> = {
@@ -349,9 +350,10 @@ export const MessageBubble = memo(function MessageBubble({
               ) : (
                 <EnrichedMarkdownText
                   allowFontScaling={false}
+                  containerStyle={styles.assistantMarkdown}
                   key={`markdown-${segment.content}`}
                   maxFontSizeMultiplier={1}
-                  markdown={segment.content.trimEnd() || " "}
+                  markdown={makeMarkdownSoftWrap(segment.content.trimEnd() || " ")}
                   selectable
                   streamingAnimation={message.state === "streaming"}
                   markdownStyle={assistantMarkdownStyle}
@@ -998,6 +1000,20 @@ function normalizeCodeLanguage(value: string) {
   return value.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
 }
 
+function makeMarkdownSoftWrap(markdown: string) {
+  return markdown
+    .replace(/(`+)([^`\n]{24,})\1/g, (_match: string, fence: string, content: string) => {
+      return `${fence}${softWrapLongToken(content)}${fence}`;
+    })
+    .replace(/https?:\/\/[^\s)\]]{24,}/g, softWrapLongToken)
+    .replace(/[A-Za-z0-9._/-]{32,}/g, softWrapLongToken);
+}
+
+function softWrapLongToken(token: string) {
+  const withDelimiterBreaks = token.replace(/([/:._-])/g, `$1${SOFT_WRAP_BREAK}`);
+  return withDelimiterBreaks.replace(/([^\u200B]{18})(?=[^\u200B])/g, `$1${SOFT_WRAP_BREAK}`);
+}
+
 export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
   code,
   deferHighlight = false,
@@ -1154,6 +1170,7 @@ function formatMessageTime(value: string) {
 
 const styles = StyleSheet.create({
   row: {
+    minWidth: 0,
     marginVertical: Spacing.two,
   },
   userRow: {
@@ -1161,10 +1178,12 @@ const styles = StyleSheet.create({
   },
   assistantRow: {
     alignItems: "stretch",
+    minWidth: 0,
   },
   bubble: {
     borderRadius: 18,
     maxWidth: "92%",
+    minWidth: 0,
     overflow: "hidden",
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
@@ -1178,13 +1197,26 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   assistantBubble: {
+    alignSelf: "stretch",
     maxWidth: "100%",
+    minWidth: 0,
     overflow: "visible",
     paddingHorizontal: 0,
     paddingVertical: 0,
+    width: "100%",
   },
   assistantContent: {
+    alignSelf: "stretch",
+    maxWidth: "100%",
+    minWidth: 0,
     paddingHorizontal: 0,
+    width: "100%",
+  },
+  assistantMarkdown: {
+    alignSelf: "stretch",
+    maxWidth: "100%",
+    minWidth: 0,
+    width: "100%",
   },
   errorBubble: {
     backgroundColor: "rgba(216, 79, 79, 0.16)",
