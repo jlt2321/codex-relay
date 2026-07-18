@@ -52,6 +52,7 @@ export function ChatShell({
   goal,
   inputNativeID,
   isAttachingImage,
+  isCompactingThread,
   isLoadingMessages,
   isRunning,
   leadingAction,
@@ -60,6 +61,7 @@ export function ChatShell({
   onCancel,
   onCollaborationModeChange,
   onAddPlanContext,
+  onCompactThread,
   onImplementPlan,
   onIgnoreInputRequest,
   onOpenMarkdownAttachment,
@@ -96,6 +98,7 @@ export function ChatShell({
   goal?: ThreadGoal | null;
   inputNativeID: string;
   isAttachingImage: boolean;
+  isCompactingThread?: boolean;
   isLoadingMessages?: boolean;
   isRunning: boolean;
   leadingAction: ChatShellAction;
@@ -104,6 +107,7 @@ export function ChatShell({
   onCancel: () => void;
   onCollaborationModeChange: (mode: ThreadCollaborationMode) => void;
   onAddPlanContext?: (context: string) => void;
+  onCompactThread?: () => Promise<void> | void;
   onImplementPlan?: () => void;
   onIgnoreInputRequest?: (request: PendingInputRequest) => void;
   onMessageCopied?: () => void;
@@ -215,12 +219,14 @@ export function ChatShell({
                 focusRequestKey={composerFocusRequestKey}
                 focusRecoveryKey={composerFocusRecoveryKey}
                 isAttachingImage={isAttachingImage}
+                isCompactingThread={isCompactingThread}
                 isRunning={isRunning}
                 nativeID={inputNativeID}
                 onAttachImage={onAttachImage}
                 onCancel={onCancel}
                 onCollaborationModeChange={onCollaborationModeChange}
                 onAddPlanContext={onAddPlanContext}
+                onCompactThread={onCompactThread}
                 onImplementPlan={onImplementPlan}
                 onIgnoreInputRequest={onIgnoreInputRequest}
                 onRefreshUsageStatus={onRefreshUsageStatus}

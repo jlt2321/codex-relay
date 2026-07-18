@@ -25,6 +25,7 @@ import {
   RunThreadResponseSchema,
   StatusResponseSchema,
   SubmitThreadInputResponseSchema,
+  ThreadCompactResponseSchema,
   ThreadContextWindowResponseSchema,
   ThreadDetailResponseSchema,
   ThreadGoalResponseSchema,
@@ -65,6 +66,7 @@ import {
   type StreamThreadRunRequest,
   type StreamThreadRunEvent,
   type SubmitThreadInputResponse,
+  type ThreadCompactResponse,
   type ThreadContextWindowResponse,
   type ThreadDetailResponse,
   type ThreadGoalResponse,
@@ -315,7 +317,7 @@ export async function pairWithServerUrl(
   });
   const responsePayload = await response.json().catch(() => undefined);
 
-      if (!response.ok) {
+  if (!response.ok) {
     throw new Error(errorMessage(responsePayload, `JLT Relay server returned ${response.status}`));
   }
 
@@ -532,7 +534,7 @@ export async function refreshSession() {
   );
   const responsePayload = await response.json().catch(() => undefined);
 
-      if (!response.ok) {
+  if (!response.ok) {
     if (isSessionInvalidStatus(response.status)) {
       clearInvalidClientSession(response.status);
     }
@@ -761,6 +763,14 @@ export async function archiveThread(threadId: string): Promise<ArchiveThreadResp
   );
 }
 
+export async function compactThread(threadId: string): Promise<ThreadCompactResponse> {
+  return request(
+    apiPaths.threadCompact(threadId),
+    { method: "POST" },
+    ThreadCompactResponseSchema.parse,
+  );
+}
+
 export async function listModels(): Promise<ListModelsResponse> {
   return request(apiPaths.models, undefined, ListModelsResponseSchema.parse);
 }
@@ -964,9 +974,7 @@ export function streamWorkspaceTerminalOutput(
           try {
             payload = decryptResponsePayload(JSON.parse(text));
           } catch {}
-          fail(
-            new Error(errorMessage(payload, `Codex Relay server returned ${response.status}`)),
-          );
+          fail(new Error(errorMessage(payload, `Codex Relay server returned ${response.status}`)));
         });
         return;
       }

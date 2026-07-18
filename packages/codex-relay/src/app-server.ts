@@ -196,6 +196,10 @@ export type AppServerThreadArchiveParams = {
   threadId: string;
 };
 
+export type AppServerThreadCompactStartParams = {
+  threadId: string;
+};
+
 export type AppServerThreadGoalGetParams = {
   threadId: string;
 };
@@ -272,6 +276,10 @@ export class CodexAppServerClient {
 
   async archiveThread(params: AppServerThreadArchiveParams) {
     await this.request("thread/archive", params);
+  }
+
+  async startThreadCompact(params: AppServerThreadCompactStartParams) {
+    await this.request("thread/compact/start", params);
   }
 
   async getThreadGoal(params: AppServerThreadGoalGetParams) {

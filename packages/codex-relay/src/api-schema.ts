@@ -678,6 +678,10 @@ export const ArchiveThreadResponseSchema = z.object({
   source: z.enum(["app-server", "memory"]).default("memory"),
 });
 
+export const ThreadCompactResponseSchema = z.object({
+  thread: ThreadSummarySchema,
+});
+
 export const ListModelsResponseSchema = z.object({
   models: z.array(CodexModelSchema),
 });
@@ -837,6 +841,7 @@ export type UpdateRuntimePreferencesRequest = z.infer<typeof UpdateRuntimePrefer
 export type VersionResponse = z.infer<typeof VersionResponseSchema>;
 export type ListThreadsResponse = z.infer<typeof ListThreadsResponseSchema>;
 export type ArchiveThreadResponse = z.infer<typeof ArchiveThreadResponseSchema>;
+export type ThreadCompactResponse = z.infer<typeof ThreadCompactResponseSchema>;
 export type ListModelsResponse = z.infer<typeof ListModelsResponseSchema>;
 export type ListSkillsResponse = z.infer<typeof ListSkillsResponseSchema>;
 export type ListWorkspaceFilesResponse = z.infer<typeof ListWorkspaceFilesResponseSchema>;
@@ -1085,6 +1090,7 @@ export const apiPaths = {
   threads: "/v1/threads",
   thread: (threadId: string) => `/v1/threads/${encodeURIComponent(threadId)}`,
   threadArchive: (threadId: string) => `/v1/threads/${encodeURIComponent(threadId)}`,
+  threadCompact: (threadId: string) => `/v1/threads/${encodeURIComponent(threadId)}/compact`,
   threadContextWindow: (threadId: string) =>
     `/v1/threads/${encodeURIComponent(threadId)}/context-window`,
   threadGoal: (threadId: string) => `/v1/threads/${encodeURIComponent(threadId)}/goal`,
@@ -1259,6 +1265,25 @@ export function createOpenApiDocument() {
             "200": jsonResponse("InterruptThreadRunResponse"),
             "404": jsonResponse("ErrorResponse"),
             "409": jsonResponse("ErrorResponse"),
+          },
+        },
+      },
+      "/v1/threads/{threadId}/compact": {
+        post: {
+          summary: "Start Codex context compaction for a thread",
+          parameters: [
+            {
+              name: "threadId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "202": jsonResponse("ThreadCompactResponse"),
+            "404": jsonResponse("ErrorResponse"),
+            "409": jsonResponse("ErrorResponse"),
+            "502": jsonResponse("ErrorResponse"),
           },
         },
       },
@@ -1818,6 +1843,13 @@ export function createOpenApiDocument() {
               type: "array",
               items: { $ref: "#/components/schemas/ThreadSummary" },
             },
+          },
+        },
+        ThreadCompactResponse: {
+          type: "object",
+          required: ["thread"],
+          properties: {
+            thread: { $ref: "#/components/schemas/ThreadSummary" },
           },
         },
         ErrorResponse: {

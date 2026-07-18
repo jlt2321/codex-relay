@@ -26,6 +26,7 @@ import {
   archiveThread,
   checkoutWorkspaceBranch,
   clearThreadGoal,
+  compactThread,
   commitPushWorkspace,
   createThread,
   getThreadGoal,
@@ -182,6 +183,16 @@ export async function archiveThreadServerState(queryClient: QueryClient, threadI
   const response = await archiveThread(threadId);
   setThreadsState(queryClient, response.threads, response.source);
   removeThreadDetailState(queryClient, response.archivedThreadId);
+  return response;
+}
+
+export async function compactThreadServerState(queryClient: QueryClient, threadId: string) {
+  const response = await compactThread(threadId);
+  upsertThreadState(queryClient, response.thread);
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: serverStateKeys.thread(threadId) }),
+    queryClient.invalidateQueries({ queryKey: serverStateKeys.contextWindow(threadId) }),
+  ]);
   return response;
 }
 

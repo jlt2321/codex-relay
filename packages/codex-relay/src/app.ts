@@ -29,6 +29,7 @@ import {
   StreamThreadRunEventSchema,
   StreamThreadRunRequestSchema,
   SubmitThreadInputResponseSchema,
+  ThreadCompactResponseSchema,
   ThreadContextWindowResponseSchema,
   ThreadDetailResponseSchema,
   ThreadGoalResponseSchema,
@@ -82,6 +83,7 @@ import {
   type StreamThreadRunEvent,
   type SubmitThreadInputResponse,
   type ThreadCollaborationMode,
+  type ThreadCompactResponse,
   type ThreadGoal,
   type ThreadMessageDetailField,
   type ThreadSummary,
@@ -157,7 +159,7 @@ import {
 import { listAvailableSkills } from "./skill-discovery.js";
 
 const defaultWorkspacePath = process.cwd();
-const defaultCodexModel = "gpt-5.5";
+const fallbackCodexModel = "gpt-5.5";
 const execFileAsync = promisify(execFile);
 const IMAGE_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const WORKSPACE_FILE_PREVIEW_MAX_BYTES = 256 * 1024;
@@ -178,6 +180,7 @@ const webPreviewSessionCookieName = "jlt_relay_web_preview_token";
 type AppOptions = {
   appServer?: CodexAppServerClient | null;
   codex?: CodexClient;
+  codexConfigPath?: string | null;
   pairing?: PairingOptions;
   preferences?: RuntimePreferencesStore;
   workspacePath?: string;
@@ -209,6 +212,11 @@ type RuntimeOptionSubset = {
   reasoningEffort?: string;
   runtimeMode?: RuntimeMode;
   sandboxMode?: string;
+};
+
+type CodexRuntimeDefaults = {
+  model?: string;
+  reasoningEffort?: string;
 };
 
 const PairApproveRequestSchema = z.object({
@@ -307,6 +315,7 @@ export function createApp(options: AppOptions = {}) {
   const workspacePath = resolve(
     options.workspacePath ?? process.env.CODEX_RELAY_WORKSPACE_PATH ?? defaultWorkspacePath,
   );
+  const codexRuntimeDefaults = readCodexRuntimeDefaults(options.codexConfigPath);
   const threads = new Map<string, ThreadMetadata>();
   const messagesByThreadId = new Map<string, ChatMessage[]>();
   const liveThreads = new Map<string, ReturnType<CodexClient["startThread"]>>();
@@ -1150,18 +1159,20 @@ export function createApp(options: AppOptions = {}) {
   app.get(apiPaths.models, async (c) => {
     try {
       const models = appServer ? await appServer.listModels() : fallbackModels();
+      const runtimeModels = modelsWithCodexRuntimeDefaults(models, codexRuntimeDefaults);
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        ListModelsResponseSchema.parse({ models: runtimeModels.map(mapAppServerModel) }),
+      );
+    } catch {
+      const models = modelsWithCodexRuntimeDefaults(fallbackModels(), codexRuntimeDefaults);
       return secureJson(
         c,
         options.pairing,
         secureSessionsByTokenHash,
         ListModelsResponseSchema.parse({ models: models.map(mapAppServerModel) }),
-      );
-    } catch {
-      return secureJson(
-        c,
-        options.pairing,
-        secureSessionsByTokenHash,
-        ListModelsResponseSchema.parse({ models: fallbackModels().map(mapAppServerModel) }),
       );
     }
   });
@@ -1270,6 +1281,7 @@ export function createApp(options: AppOptions = {}) {
     const { threadId } = appServer
       ? await createAppServerThreadRecord({
           appServer,
+          codexRuntimeDefaults,
           messagesByThreadId,
           options: runOptions,
           persistRuntimeOptions: true,
@@ -1295,6 +1307,7 @@ export function createApp(options: AppOptions = {}) {
       startAutomationAppServerTurn({
         activeAppServerTurnIdsByThreadId,
         appServer,
+        codexRuntimeDefaults,
         messagesByThreadId,
         prompt: automation.prompt,
         runOptions,
@@ -1938,6 +1951,63 @@ export function createApp(options: AppOptions = {}) {
     );
   });
 
+  app.post("/v1/threads/:threadId/compact", async (c) => {
+    const threadId = c.req.param("threadId");
+    const knownThread = await ensureKnownThread({
+      appServer,
+      threadId,
+      messagesByThreadId,
+      threads,
+    });
+    if (!knownThread) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("not_found", `Thread ${threadId} is not known to this server.`),
+        404,
+      );
+    }
+    if (!appServer) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("unsupported", "Thread compaction requires the Codex app-server."),
+        409,
+      );
+    }
+    if (knownThread.state === "running" || activeAppServerTurnIdsByThreadId.has(threadId)) {
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError("thread_running", `Thread ${threadId} is currently running.`),
+        409,
+      );
+    }
+
+    try {
+      await appServer.startThreadCompact({ threadId });
+      const appServerThread = await appServer.readThread(threadId, { includeTurns: false });
+      const thread = rememberAppServerThread(threads, appServerThread);
+      const response: ThreadCompactResponse = ThreadCompactResponseSchema.parse({
+        thread,
+      });
+      return secureJson(c, options.pairing, secureSessionsByTokenHash, response, 202);
+    } catch (error) {
+      const message = errorMessage(error);
+      const status = /not found|no rollout found/i.test(message) ? 404 : 502;
+      return secureJson(
+        c,
+        options.pairing,
+        secureSessionsByTokenHash,
+        apiError(status === 404 ? "not_found" : "compact_unavailable", message),
+        status,
+      );
+    }
+  });
+
   app.get("/v1/threads/:threadId/goal", async (c) => {
     const threadId = c.req.param("threadId");
     if (!appServer) {
@@ -2199,6 +2269,7 @@ export function createApp(options: AppOptions = {}) {
     const { threadId } = appServer
       ? await createAppServerThreadRecord({
           appServer,
+          codexRuntimeDefaults,
           messagesByThreadId,
           options: runOptions,
           persistRuntimeOptions: Boolean(runOptions.prompt) || hasRequestRuntimeOptions,
@@ -2479,7 +2550,7 @@ export function createApp(options: AppOptions = {}) {
     }
 
     steeringThreads.add(threadId);
-    await startAppServerTurn(appServer, threadId, queuedInput);
+    await startAppServerTurn(appServer, threadId, queuedInput, codexRuntimeDefaults);
     const thread = updateThread(threads, messagesByThreadId, threadId, {
       state: "running",
       lastPrompt: promptWithAttachmentReferences(queuedInput.prompt, queuedInput.attachments),
@@ -2714,6 +2785,7 @@ export function createApp(options: AppOptions = {}) {
           activeAppServerTurnIdsByThreadId,
           controller,
           codex,
+          codexRuntimeDefaults,
           encoder,
           liveThreads,
           messagesByThreadId,
@@ -2857,6 +2929,7 @@ function createThreadRecord(input: {
 
 async function createAppServerThreadRecord(input: {
   appServer: CodexAppServerClient;
+  codexRuntimeDefaults: CodexRuntimeDefaults;
   messagesByThreadId: Map<string, ChatMessage[]>;
   options: {
     approvalPolicy?: string;
@@ -2877,7 +2950,7 @@ async function createAppServerThreadRecord(input: {
     approvalPolicy: runtime.approvalPolicy,
     cwd: input.workspacePath,
     experimentalRawEvents: false,
-    model: input.options.model ?? null,
+    model: modelWithRuntimeDefault(input.options, input.codexRuntimeDefaults),
     persistExtendedHistory: true,
     sandbox: runtime.sandbox,
     serviceTier: input.options.serviceTier ?? null,
@@ -2999,6 +3072,7 @@ async function runPromptBuffered(input: {
 function startAutomationAppServerTurn(input: {
   activeAppServerTurnIdsByThreadId: Map<string, string>;
   appServer: CodexAppServerClient;
+  codexRuntimeDefaults: CodexRuntimeDefaults;
   messagesByThreadId: Map<string, ChatMessage[]>;
   prompt: string;
   runOptions: {
@@ -3027,14 +3101,19 @@ function startAutomationAppServerTurn(input: {
     ...runtimeMetadataFromOptions(input.runOptions),
   });
 
-  void startAppServerTurn(input.appServer, input.threadId, {
-    attachments: [],
-    id: randomUUID(),
-    prompt: input.prompt,
-    runOptions: input.runOptions,
-    skills: [],
-    workspacePath: input.workspacePath,
-  })
+  void startAppServerTurn(
+    input.appServer,
+    input.threadId,
+    {
+      attachments: [],
+      id: randomUUID(),
+      prompt: input.prompt,
+      runOptions: input.runOptions,
+      skills: [],
+      workspacePath: input.workspacePath,
+    },
+    input.codexRuntimeDefaults,
+  )
     .then((turn) => {
       input.activeAppServerTurnIdsByThreadId.set(input.threadId, turn.id);
       for (const item of turn.items) {
@@ -3077,6 +3156,7 @@ async function runPromptStreamed(input: {
   activeAppServerTurnIdsByThreadId: Map<string, string>;
   appServer: CodexAppServerClient | null;
   attachments: PromptAttachment[];
+  codexRuntimeDefaults: CodexRuntimeDefaults;
   controller: ReadableStreamDefaultController<Uint8Array>;
   codex: CodexClient;
   encoder: TextEncoder;
@@ -3106,6 +3186,7 @@ async function runPromptStreamed(input: {
       appServer: input.appServer,
       attachments: input.attachments,
       activeAppServerTurnIdsByThreadId: input.activeAppServerTurnIdsByThreadId,
+      codexRuntimeDefaults: input.codexRuntimeDefaults,
       controller: input.controller,
       encoder: input.encoder,
       messagesByThreadId: input.messagesByThreadId,
@@ -3327,28 +3408,30 @@ async function startAppServerTurn(
   appServer: CodexAppServerClient,
   threadId: string,
   input: QueuedThreadInput,
+  codexRuntimeDefaults: CodexRuntimeDefaults,
 ) {
   const runtime = resolveAppServerRuntime(input.runOptions, input.workspacePath);
+  const model = modelWithRuntimeDefault(input.runOptions, codexRuntimeDefaults);
   const params: AppServerTurnStartParams = {
     approvalPolicy: runtime.approvalPolicy,
-    collaborationMode: appServerCollaborationMode(input.runOptions),
+    collaborationMode: appServerCollaborationMode(input.runOptions, codexRuntimeDefaults),
     cwd: input.workspacePath,
     effort: input.runOptions.reasoningEffort ?? null,
     input: appServerTurnInput(input.prompt, input.attachments, input.skills),
-    model: input.runOptions.model ?? null,
+    model,
     sandboxPolicy: runtime.sandboxPolicy,
     serviceTier: input.runOptions.serviceTier ?? null,
     threadId,
   };
 
-  await resumeAppServerThreadIfNeeded(appServer, threadId, input, runtime);
+  await resumeAppServerThreadIfNeeded(appServer, threadId, input, runtime, codexRuntimeDefaults);
   try {
     return await appServer.startTurn(params);
   } catch (error) {
     if (!isAppServerThreadNotLoadedError(error)) {
       throw error;
     }
-    await resumeAppServerThread(appServer, threadId, input, runtime);
+    await resumeAppServerThread(appServer, threadId, input, runtime, codexRuntimeDefaults);
     return appServer.startTurn(params);
   }
 }
@@ -3358,6 +3441,7 @@ async function resumeAppServerThreadIfNeeded(
   threadId: string,
   input: QueuedThreadInput,
   runtime: ReturnType<typeof resolveAppServerRuntime>,
+  codexRuntimeDefaults: CodexRuntimeDefaults,
 ) {
   if (typeof appServer.readThread !== "function") {
     return;
@@ -3372,7 +3456,7 @@ async function resumeAppServerThreadIfNeeded(
   if (!isAppServerThreadNotLoaded(thread)) {
     return;
   }
-  await resumeAppServerThread(appServer, threadId, input, runtime);
+  await resumeAppServerThread(appServer, threadId, input, runtime, codexRuntimeDefaults);
 }
 
 async function resumeAppServerThread(
@@ -3380,6 +3464,7 @@ async function resumeAppServerThread(
   threadId: string,
   input: QueuedThreadInput,
   runtime: ReturnType<typeof resolveAppServerRuntime>,
+  codexRuntimeDefaults: CodexRuntimeDefaults,
 ) {
   if (typeof appServer.resumeThread !== "function") {
     return;
@@ -3388,7 +3473,7 @@ async function resumeAppServerThread(
     approvalPolicy: runtime.approvalPolicy,
     cwd: input.workspacePath,
     excludeTurns: false,
-    model: input.runOptions.model ?? null,
+    model: modelWithRuntimeDefault(input.runOptions, codexRuntimeDefaults),
     persistExtendedHistory: true,
     sandbox: runtime.sandbox,
     serviceTier: input.runOptions.serviceTier ?? null,
@@ -3766,6 +3851,7 @@ async function runAppServerPromptStreamed(input: {
   activeAppServerTurnIdsByThreadId: Map<string, string>;
   appServer: CodexAppServerClient;
   attachments: PromptAttachment[];
+  codexRuntimeDefaults: CodexRuntimeDefaults;
   controller: ReadableStreamDefaultController<Uint8Array>;
   encoder: TextEncoder;
   messagesByThreadId: Map<string, ChatMessage[]>;
@@ -4109,7 +4195,12 @@ async function runAppServerPromptStreamed(input: {
               handedOffToQueuedTurn = true;
               assistantMessageId = undefined;
               input.steeringThreads.add(activeThreadId);
-              void startAppServerTurn(input.appServer, activeThreadId, nextQueuedInput)
+              void startAppServerTurn(
+                input.appServer,
+                activeThreadId,
+                nextQueuedInput,
+                input.codexRuntimeDefaults,
+              )
                 .then((turn) => {
                   activeTurnId = turn.id;
                   input.activeAppServerTurnIdsByThreadId.set(activeThreadId, activeTurnId);
@@ -4196,14 +4287,19 @@ async function runAppServerPromptStreamed(input: {
     debugStream("start turn begin", activeThreadId);
     let turn: AppServerTurn;
     try {
-      turn = await startAppServerTurn(input.appServer, activeThreadId, {
-        attachments: input.attachments,
-        id: randomUUID(),
-        prompt,
-        runOptions: input.runOptions,
-        skills: input.skills,
-        workspacePath: input.workspacePath,
-      });
+      turn = await startAppServerTurn(
+        input.appServer,
+        activeThreadId,
+        {
+          attachments: input.attachments,
+          id: randomUUID(),
+          prompt,
+          runOptions: input.runOptions,
+          skills: input.skills,
+          workspacePath: input.workspacePath,
+        },
+        input.codexRuntimeDefaults,
+      );
     } catch (error) {
       if (!isAppServerThreadNotFound(error)) {
         throw error;
@@ -4224,6 +4320,7 @@ async function runAppServerPromptStreamed(input: {
         messagesByThreadId: input.messagesByThreadId,
         prompt,
         runOptions: input.runOptions,
+        codexRuntimeDefaults: input.codexRuntimeDefaults,
         threadId: activeThreadId,
         threads: input.threads,
         userMessageId: userMessage.id,
@@ -4237,14 +4334,19 @@ async function runAppServerPromptStreamed(input: {
         thread: threadSummary,
         message: userMessage,
       });
-      turn = await startAppServerTurn(input.appServer, activeThreadId, {
-        attachments: input.attachments,
-        id: randomUUID(),
-        prompt,
-        runOptions: input.runOptions,
-        skills: input.skills,
-        workspacePath: input.workspacePath,
-      });
+      turn = await startAppServerTurn(
+        input.appServer,
+        activeThreadId,
+        {
+          attachments: input.attachments,
+          id: randomUUID(),
+          prompt,
+          runOptions: input.runOptions,
+          skills: input.skills,
+          workspacePath: input.workspacePath,
+        },
+        input.codexRuntimeDefaults,
+      );
     }
     activeTurnId = turn.id;
     input.activeAppServerTurnIdsByThreadId.set(activeThreadId, activeTurnId);
@@ -4452,6 +4554,7 @@ function delay(ms: number) {
 
 async function recoverMissingAppServerThread(input: {
   appServer: CodexAppServerClient;
+  codexRuntimeDefaults: CodexRuntimeDefaults;
   messagesByThreadId: Map<string, ChatMessage[]>;
   prompt: string;
   runOptions: {
@@ -4474,7 +4577,7 @@ async function recoverMissingAppServerThread(input: {
     approvalPolicy: runtime.approvalPolicy,
     cwd: input.workspacePath,
     experimentalRawEvents: false,
-    model: input.runOptions.model ?? null,
+    model: modelWithRuntimeDefault(input.runOptions, input.codexRuntimeDefaults),
     persistExtendedHistory: true,
     sandbox: runtime.sandbox,
     serviceTier: input.runOptions.serviceTier ?? null,
@@ -5827,6 +5930,36 @@ function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
 }
 
+function readCodexRuntimeDefaults(configPath: string | null | undefined): CodexRuntimeDefaults {
+  if (configPath === null || (configPath === undefined && process.env.VITEST)) {
+    return {};
+  }
+
+  const resolvedPath = configPath === undefined ? defaultCodexConfigPath() : configPath;
+  let configText: string;
+  try {
+    configText = readFileSync(resolvedPath, "utf8");
+  } catch (error) {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTDIR")) {
+      return {};
+    }
+    throw error;
+  }
+
+  const parsed = parseFlatToml(configText);
+  return {
+    model: stringValue(parsed.model),
+    reasoningEffort: stringValue(parsed.model_reasoning_effort),
+  };
+}
+
+function defaultCodexConfigPath() {
+  const codexHome = process.env.CODEX_HOME?.trim()
+    ? resolve(process.env.CODEX_HOME)
+    : join(homedir(), ".codex");
+  return join(codexHome, "config.toml");
+}
+
 function automationRootDirectory() {
   return process.env.CODEX_RELAY_AUTOMATIONS_DIR ?? defaultAutomationRootDirectory;
 }
@@ -5986,11 +6119,14 @@ function promptForCollaborationMode(prompt: string, collaborationMode?: ThreadCo
   return `${collaborationModeTemplates.plan}\n\nUser request:\n${prompt}`;
 }
 
-function appServerCollaborationMode(options: {
-  collaborationMode?: ThreadCollaborationMode;
-  model?: string;
-  reasoningEffort?: string;
-}): AppServerTurnStartParams["collaborationMode"] {
+function appServerCollaborationMode(
+  options: {
+    collaborationMode?: ThreadCollaborationMode;
+    model?: string;
+    reasoningEffort?: string;
+  },
+  codexRuntimeDefaults: CodexRuntimeDefaults,
+): AppServerTurnStartParams["collaborationMode"] {
   if (!options.collaborationMode) {
     return null;
   }
@@ -5999,10 +6135,17 @@ function appServerCollaborationMode(options: {
     mode: options.collaborationMode,
     settings: {
       developer_instructions: null,
-      model: options.model ?? defaultCodexModel,
+      model: options.model ?? codexRuntimeDefaults.model ?? fallbackCodexModel,
       reasoning_effort: options.reasoningEffort ?? null,
     },
   };
+}
+
+function modelWithRuntimeDefault(
+  options: { model?: string },
+  codexRuntimeDefaults: CodexRuntimeDefaults,
+) {
+  return options.model ?? codexRuntimeDefaults.model ?? null;
 }
 
 function buildThreadOptions(
@@ -7254,11 +7397,55 @@ function objectRecord(value: unknown) {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : undefined;
 }
 
+function modelsWithCodexRuntimeDefaults(
+  models: AppServerModel[],
+  codexRuntimeDefaults: CodexRuntimeDefaults,
+): AppServerModel[] {
+  if (!codexRuntimeDefaults.model) {
+    return models;
+  }
+
+  const hasRuntimeDefault = models.some(
+    (model) =>
+      model.id === codexRuntimeDefaults.model || model.model === codexRuntimeDefaults.model,
+  );
+  const normalizedModels = models.map((model) => ({
+    ...model,
+    isDefault:
+      model.id === codexRuntimeDefaults.model || model.model === codexRuntimeDefaults.model,
+  }));
+
+  if (hasRuntimeDefault) {
+    return normalizedModels;
+  }
+
+  return [...normalizedModels, syntheticCodexRuntimeModel(codexRuntimeDefaults)];
+}
+
+function syntheticCodexRuntimeModel(codexRuntimeDefaults: CodexRuntimeDefaults): AppServerModel {
+  const model = codexRuntimeDefaults.model ?? fallbackCodexModel;
+  return {
+    id: model,
+    model,
+    displayName: model,
+    description: "Current Codex config model",
+    isDefault: true,
+    defaultReasoningEffort: codexRuntimeDefaults.reasoningEffort ?? "medium",
+    supportedReasoningEfforts: [
+      { reasoningEffort: "minimal" },
+      { reasoningEffort: "low" },
+      { reasoningEffort: "medium" },
+      { reasoningEffort: "high" },
+      { reasoningEffort: "xhigh" },
+    ],
+  };
+}
+
 function fallbackModels(): AppServerModel[] {
   return [
     {
-      id: defaultCodexModel,
-      model: defaultCodexModel,
+      id: fallbackCodexModel,
+      model: fallbackCodexModel,
       displayName: "GPT-5.5",
       description: "Default Codex model",
       isDefault: true,

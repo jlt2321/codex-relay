@@ -216,6 +216,7 @@ export const ChatComposer = memo(function ChatComposer({
   focusRecoveryKey,
   inputEditable,
   isAttachingImage,
+  isCompactingThread,
   isRunning,
   goal,
   nativeID,
@@ -228,6 +229,7 @@ export const ChatComposer = memo(function ChatComposer({
   onAttachImage,
   onCancel,
   onCollaborationModeChange,
+  onCompactThread,
   onImplementPlan,
   onIgnoreInputRequest,
   onKeyboardLayoutFrozenChange,
@@ -254,6 +256,7 @@ export const ChatComposer = memo(function ChatComposer({
   focusRecoveryKey?: number | string;
   inputEditable?: boolean;
   isAttachingImage: boolean;
+  isCompactingThread?: boolean;
   isRunning: boolean;
   goal?: ThreadGoal | null;
   nativeID?: string;
@@ -266,6 +269,7 @@ export const ChatComposer = memo(function ChatComposer({
   onAttachImage: () => Promise<void> | void;
   onCancel: () => void;
   onCollaborationModeChange: (mode: ThreadCollaborationMode) => void;
+  onCompactThread?: () => Promise<void> | void;
   onImplementPlan?: () => void;
   onIgnoreInputRequest?: (request: PendingInputRequest) => void;
   onKeyboardLayoutFrozenChange?: (frozen: boolean) => void;
@@ -338,6 +342,9 @@ export const ChatComposer = memo(function ChatComposer({
   const isAttachBusy = isAttachingImage || isAttachLaunchPending;
   const canUseVoiceInput = isInputEditable && !disabled && !isAttachBusy;
   const canSend = hasMessageContent && !disabled && !isAttachBusy;
+  const canCompactThread = Boolean(
+    onCompactThread && composerThreadId && !disabled && !isRunning && !isCompactingThread,
+  );
   const canStop = isRunning && !hasMessageContent;
   const showSendButton = !isRunning || hasMessageContent;
   const actionLabel = isRunning ? "Send running input" : "Send";
@@ -517,6 +524,16 @@ export const ChatComposer = memo(function ChatComposer({
   function togglePlanMode() {
     onCollaborationModeChange(isPlanMode ? "default" : "plan");
     closeAddSheet();
+  }
+
+  function compactThreadFromSheet() {
+    if (!canCompactThread) {
+      return;
+    }
+
+    hapticSelection();
+    closeAddSheet();
+    void Promise.resolve(onCompactThread?.());
   }
 
   function openGoalSheet() {
@@ -1215,6 +1232,20 @@ export const ChatComposer = memo(function ChatComposer({
           subtitle={isPlanMode ? "Plan first, then wait" : "Ask Codex to plan before editing"}
           selected={isPlanMode}
           onPress={togglePlanMode}
+        />
+        <SheetActionRow
+          accessibilityLabel="Compact conversation"
+          icon="compact"
+          title="Compact conversation"
+          subtitle={
+            isCompactingThread
+              ? "Compacting conversation"
+              : isRunning
+                ? "Available after Codex finishes"
+                : "Summarize this thread to reduce context usage"
+          }
+          disabled={!canCompactThread}
+          onPress={compactThreadFromSheet}
         />
         <View style={styles.sheetSection}>
           <Text style={[styles.sheetSectionTitle, { color: theme.textSecondary }]}>

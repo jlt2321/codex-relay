@@ -11,7 +11,7 @@ describe("Codex app-server spawn resolution", () => {
 
     expect(spawnConfig).toEqual({
       command: "codex",
-      args: ["app-server", "proxy"],
+      args: ["app-server", "--listen", "stdio://"],
       shell: true,
       windowsHide: true,
     });
@@ -25,7 +25,7 @@ describe("Codex app-server spawn resolution", () => {
 
     expect(spawnConfig).toEqual({
       command: "C:\\Users\\leore\\AppData\\Roaming\\npm\\codex.cmd",
-      args: ["app-server", "proxy"],
+      args: ["app-server", "--listen", "stdio://"],
       shell: true,
       windowsHide: true,
     });
@@ -39,7 +39,7 @@ describe("Codex app-server spawn resolution", () => {
 
     expect(spawnConfig).toEqual({
       command: "C:\\Program Files\\Codex\\codex.exe",
-      args: ["app-server", "proxy"],
+      args: ["app-server", "--listen", "stdio://"],
       shell: false,
       windowsHide: true,
     });
@@ -53,21 +53,21 @@ describe("Codex app-server spawn resolution", () => {
 
     expect(spawnConfig).toEqual({
       command: "codex",
-      args: ["app-server", "proxy"],
+      args: ["app-server", "--listen", "stdio://"],
       shell: false,
       windowsHide: false,
     });
   });
 
-  it("can use the legacy isolated stdio app-server mode", () => {
+  it("can explicitly use the shared proxy app-server mode", () => {
     const spawnConfig = resolveCodexAppServerSpawn({
-      env: { CODEX_RELAY_APP_SERVER_MODE: "stdio" },
+      env: { CODEX_RELAY_APP_SERVER_MODE: "proxy" },
       platform: "darwin",
     });
 
     expect(spawnConfig).toEqual({
       command: "codex",
-      args: ["app-server", "--listen", "stdio://"],
+      args: ["app-server", "proxy"],
       shell: false,
       windowsHide: false,
     });

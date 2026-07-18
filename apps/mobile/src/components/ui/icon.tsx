@@ -24,6 +24,7 @@ import {
   LogOut,
   Menu,
   Mic,
+  Minimize2,
   PanelRightOpen,
   Plus,
   RefreshCw,
@@ -48,6 +49,7 @@ export type AppIconName =
   | "attach"
   | "branch"
   | "closeMenu"
+  | "compact"
   | "chevronRight"
   | "check"
   | "controls"
@@ -97,6 +99,7 @@ const iconComponents: Record<AppIconName, LucideComponent> = {
   branch: GitBranch,
   check: Check,
   closeMenu: Menu,
+  compact: Minimize2,
   chevronRight: ChevronRight,
   controls: SlidersHorizontal,
   copy: Copy,

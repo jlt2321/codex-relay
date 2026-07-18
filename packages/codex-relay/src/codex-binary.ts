@@ -35,16 +35,16 @@ export function resolveCodexAppServerSpawn(
 }
 
 function resolveAppServerArgs(env: NodeJS.ProcessEnv) {
-  if (env.CODEX_RELAY_APP_SERVER_MODE?.trim() === "stdio") {
-    return [...appServerStdioArgs];
+  const socketPath = env.CODEX_RELAY_APP_SERVER_SOCK?.trim();
+  if (env.CODEX_RELAY_APP_SERVER_MODE?.trim() === "proxy" || socketPath) {
+    const args: string[] = [...appServerProxyArgs];
+    if (socketPath) {
+      args.push("--sock", socketPath);
+    }
+    return args;
   }
 
-  const args: string[] = [...appServerProxyArgs];
-  const socketPath = env.CODEX_RELAY_APP_SERVER_SOCK?.trim();
-  if (socketPath) {
-    args.push("--sock", socketPath);
-  }
-  return args;
+  return [...appServerStdioArgs];
 }
 
 function resolveCodexBinary(env: NodeJS.ProcessEnv) {

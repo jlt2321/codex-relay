@@ -298,6 +298,50 @@ describe("Codex Relay server routes", () => {
     });
   });
 
+  it("adds the Codex config model when app-server model/list omits it", async () => {
+    const configDir = await mkdtemp(join(tmpdir(), "codex-relay-codex-config-"));
+    const codexConfigPath = join(configDir, "config.toml");
+    await writeFile(codexConfigPath, 'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\n');
+    const appServer = {
+      listModels: vi.fn<() => Promise<unknown[]>>(async () => [
+        {
+          id: "gpt-5.5",
+          model: "gpt-5.5",
+          displayName: "GPT-5.5",
+          isDefault: true,
+          defaultReasoningEffort: "medium",
+          supportedReasoningEfforts: [{ reasoningEffort: "medium" }],
+        },
+      ]),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      codexConfigPath,
+      workspacePath: "/tmp/codex-relay",
+    });
+
+    const response = await app.request("/v1/models");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.models).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          model: "gpt-5.6-sol",
+          displayName: "gpt-5.6-sol",
+          isDefault: true,
+          defaultReasoningEffort: "high",
+        }),
+      ]),
+    );
+    expect(body.models.find((model: { model: string }) => model.model === "gpt-5.5")).toMatchObject(
+      {
+        isDefault: false,
+      },
+    );
+  });
+
   it("keeps legacy file runtime preferences after server restarts", async () => {
     const workspacePath = "/tmp/codex-relay";
     const preferencesPath = join(
@@ -1610,6 +1654,63 @@ describe("Codex Relay server routes", () => {
     expect(body.threads[0]).toMatchObject({
       id: "app-thread-remaining",
       title: "Remaining thread",
+    });
+  });
+
+  it("starts app-server thread compaction", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const now = Date.now() / 1000;
+    const appThread = {
+      id: "app-thread-compact",
+      preview: "Thread to compact",
+      createdAt: now,
+      updatedAt: now,
+      status: { type: "idle" },
+      cwd: workspacePath,
+      source: "app",
+      modelProvider: "openai",
+      name: "Thread to compact",
+      turns: [],
+    };
+    const compactedThread = {
+      ...appThread,
+      status: { type: "running" },
+      updatedAt: now + 1,
+    };
+    let compactStarted = false;
+    const appServer = {
+      listThreads: vi.fn<() => Promise<unknown[]>>(async () => [appThread]),
+      onNotification() {
+        return () => undefined;
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      readThread: vi.fn<(threadId: string) => Promise<unknown>>(async () =>
+        compactStarted ? compactedThread : appThread,
+      ),
+      startThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+      startThreadCompact: vi.fn<(params: { threadId: string }) => Promise<void>>(async () => {
+        compactStarted = true;
+      }),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    const response = await app.request("/v1/threads/app-thread-compact/compact", {
+      method: "POST",
+    });
+    const body = await response.json();
+
+    expect(response.status).toBe(202);
+    expect(appServer.startThreadCompact).toHaveBeenCalledWith({ threadId: "app-thread-compact" });
+    expect(body.thread).toMatchObject({
+      id: "app-thread-compact",
+      state: "running",
+      title: "Thread to compact",
     });
   });
 
@@ -3346,6 +3447,93 @@ describe("Codex Relay server routes", () => {
           },
         },
         model: null,
+      }),
+    );
+  });
+
+  it("uses the Codex config model for app-server turns without a model override", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const configDir = await mkdtemp(join(tmpdir(), "codex-relay-codex-config-"));
+    const codexConfigPath = join(configDir, "config.toml");
+    await writeFile(codexConfigPath, 'model = "gpt-5.6-sol"\nmodel_reasoning_effort = "high"\n');
+    const notificationHandlers = new Set<(notification: unknown) => void>();
+    const startThread = vi.fn<() => Promise<unknown>>(async () => ({
+      id: "app-thread-config-model",
+      createdAt: Date.now() / 1000,
+      cwd: workspacePath,
+      modelProvider: "custom",
+      name: "Config model thread",
+      preview: "Config model thread",
+      source: "app",
+      status: "idle",
+      turns: [],
+      updatedAt: Date.now() / 1000,
+    }));
+    const startTurn = vi.fn<(params: unknown) => Promise<unknown>>(async () => {
+      queueMicrotask(() => {
+        for (const handler of notificationHandlers) {
+          handler({
+            method: "turn/completed",
+            params: {
+              status: "completed",
+              threadId: "app-thread-config-model",
+              turnId: "turn-1",
+            },
+          });
+        }
+      });
+      return { id: "turn-1", items: [], status: "completed", startedAt: null, completedAt: null };
+    });
+    const appServer = {
+      onNotification(handler: (notification: unknown) => void) {
+        notificationHandlers.add(handler);
+        return () => notificationHandlers.delete(handler);
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      startThread,
+      startTurn,
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      codexConfigPath,
+      workspacePath,
+    });
+
+    await app.request("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ title: "Config model thread" }),
+      headers: { "content-type": "application/json" },
+    });
+    const response = await app.request("/v1/threads/app-thread-config-model/runs/stream", {
+      method: "POST",
+      body: JSON.stringify({
+        collaborationMode: "plan",
+        prompt: "Plan this without a model override",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    await response.text();
+
+    expect(response.status).toBe(200);
+    expect(startThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-5.6-sol",
+      }),
+    );
+    expect(startTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        collaborationMode: {
+          mode: "plan",
+          settings: {
+            developer_instructions: null,
+            model: "gpt-5.6-sol",
+            reasoning_effort: null,
+          },
+        },
+        model: "gpt-5.6-sol",
       }),
     );
   });

@@ -68,6 +68,7 @@ import {
   checkoutWorkspaceBranchServerState,
   clearThreadGoalServerState,
   clearServerState,
+  compactThreadServerState,
   commitPushWorkspaceServerState,
   createThreadServerState,
   fetchContextWindowState,
@@ -196,6 +197,7 @@ export function ChatScreen() {
     pendingWorkspacePreviewStore$.request.get(),
   );
   const queryClient = useQueryClient();
+  const compactingThreadIdsRef = useRef(new Set<string>());
   const checkoutWorkspaceBranchMutation = useMutation({
     mutationFn: (body: Parameters<typeof checkoutWorkspaceBranchServerState>[1]) =>
       checkoutWorkspaceBranchServerState(queryClient, body),
@@ -292,6 +294,18 @@ export function ChatScreen() {
     onSuccess: (_response, input) => {
       void queryClient
         .invalidateQueries({ queryKey: serverStateKeys.thread(input.threadId) })
+        .catch(() => undefined);
+    },
+  });
+  const compactThreadMutation = useMutation({
+    mutationFn: (input: { threadId: string }) =>
+      compactThreadServerState(queryClient, input.threadId),
+    onSuccess: (_response, input) => {
+      void queryClient
+        .invalidateQueries({ queryKey: serverStateKeys.thread(input.threadId) })
+        .catch(() => undefined);
+      void queryClient
+        .invalidateQueries({ queryKey: serverStateKeys.contextWindow(input.threadId) })
         .catch(() => undefined);
     },
   });
@@ -551,6 +565,9 @@ export function ChatScreen() {
       setThreadMessagesLoading(threadId, true);
       try {
         const response = await fetchThreadState(queryClient, threadId);
+        if (response.thread.state !== "running") {
+          compactingThreadIdsRef.current.delete(threadId);
+        }
         syncPairedSessionState();
         if (chatStore$.activeThreadId.peek() !== threadId) {
           return response.thread.state;
@@ -604,6 +621,10 @@ export function ChatScreen() {
       setActiveThread(threadId);
       const state = await syncThreadSnapshot(threadId);
       if (state === "running") {
+        if (compactingThreadIdsRef.current.has(threadId)) {
+          scheduleThreadStatusPoll(threadId);
+          return;
+        }
         requestThreadStreamReconnect(threadId);
         return;
       }
@@ -612,7 +633,7 @@ export function ChatScreen() {
         setThreadRunningState(queryClient, threadId, false);
       }
     },
-    [clearThreadStatusPoll, queryClient, syncThreadSnapshot],
+    [clearThreadStatusPoll, queryClient, scheduleThreadStatusPoll, syncThreadSnapshot],
   );
 
   const refreshUsageStatus = useCallback(
@@ -1098,6 +1119,9 @@ export function ChatScreen() {
 
   useEffect(() => {
     if (!activeThreadId || !isRunning || connection !== "connected") {
+      return undefined;
+    }
+    if (compactingThreadIdsRef.current.has(activeThreadId)) {
       return undefined;
     }
 
@@ -1634,6 +1658,30 @@ export function ChatScreen() {
     void sendPrompt(context, "plan");
   }
 
+  async function compactCurrentThread() {
+    if (!activeThreadId || isRunning || compactThreadMutation.isPending) {
+      return;
+    }
+
+    compactingThreadIdsRef.current.add(activeThreadId);
+    try {
+      const response = await compactThreadMutation.mutateAsync({ threadId: activeThreadId });
+      setConnection("connected");
+      hapticSuccess();
+      void refreshUsageStatus(activeThreadId).catch(() => undefined);
+      if (response.thread.state === "running") {
+        scheduleThreadStatusPoll(activeThreadId);
+      } else {
+        compactingThreadIdsRef.current.delete(activeThreadId);
+      }
+    } catch (caught) {
+      syncPairedSessionState();
+      compactingThreadIdsRef.current.delete(activeThreadId);
+      void keepConnectionIfSessionIsValid(errorMessage(caught));
+      hapticWarning();
+    }
+  }
+
   async function submitInputRequest(request: PendingInputRequest, answers: string[]) {
     hapticLightImpact();
     try {
@@ -2137,6 +2185,7 @@ export function ChatScreen() {
             onCancel={stopRun}
             onCollaborationModeChange={changeCollaborationMode}
             onAddPlanContext={addPlanContext}
+            onCompactThread={compactCurrentThread}
             onImplementPlan={implementPlan}
             onIgnoreInputRequest={(request) => void ignoreInputRequest(request)}
             onMessageCopied={showMessageCopiedToast}
@@ -2151,6 +2200,7 @@ export function ChatScreen() {
             onSaveGoal={saveThreadGoalObjective}
             onToggleGoalPause={toggleThreadGoalPause}
             pendingInputRequest={pendingInputRequest}
+            isCompactingThread={compactThreadMutation.isPending}
             queuedPrompts={queuedPrompts}
             rateLimitBuckets={rateLimitBuckets}
             skills={skills}
