@@ -1,7 +1,7 @@
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { CodexAppServerClient } from "../src/app-server.js";
@@ -18,6 +18,7 @@ import {
 
 const runLiveAppServerTest = process.env.CODEX_RELAY_LIVE_APP_SERVER_TEST === "1";
 const liveDescribe = runLiveAppServerTest ? describe : describe.skip;
+const liveModel = process.env.CODEX_RELAY_LIVE_MODEL?.trim() || "gpt-5.5";
 
 liveDescribe("live mobile stream contract", () => {
   let appServer: CodexAppServerClient | undefined;
@@ -42,7 +43,7 @@ liveDescribe("live mobile stream contract", () => {
     const createResponse = await app.request("/v1/threads", {
       method: "POST",
       body: JSON.stringify({
-        model: "gpt-5.5",
+        model: liveModel,
         runtimeMode: "full-access",
         title: "Live stream contract",
       }),
@@ -54,7 +55,7 @@ liveDescribe("live mobile stream contract", () => {
     const response = await app.request(`/v1/threads/${threadId}/runs/stream`, {
       method: "POST",
       body: JSON.stringify({
-        model: "gpt-5.5",
+        model: liveModel,
         prompt: "Reply with exactly: relay-live-ok",
         reasoningEffort: "medium",
         runtimeMode: "full-access",
@@ -87,7 +88,7 @@ liveDescribe("live mobile stream contract", () => {
     const createResponse = await app.request("/v1/threads", {
       method: "POST",
       body: JSON.stringify({
-        model: "gpt-5.5",
+        model: liveModel,
         runtimeMode: "full-access",
         title: "Live continuation contract",
       }),
@@ -99,7 +100,7 @@ liveDescribe("live mobile stream contract", () => {
     const firstResponse = await app.request(`/v1/threads/${threadId}/runs/stream`, {
       method: "POST",
       body: JSON.stringify({
-        model: "gpt-5.5",
+        model: liveModel,
         prompt: "Reply with exactly: relay-live-first-ok",
         reasoningEffort: "medium",
         runtimeMode: "full-access",
@@ -119,7 +120,7 @@ liveDescribe("live mobile stream contract", () => {
     const response = await app.request(`/v1/threads/${threadId}/runs/stream`, {
       method: "POST",
       body: JSON.stringify({
-        model: "gpt-5.5",
+        model: liveModel,
         prompt: "Reply with exactly: relay-live-second-ok",
         reasoningEffort: "medium",
         runtimeMode: "full-access",
@@ -141,6 +142,52 @@ liveDescribe("live mobile stream contract", () => {
     expect(chatStore$.threadsById[threadId].state.peek()).toBe("completed");
     expect(assistantMessage?.state).toBe("completed");
     expect(assistantMessage?.content.toLowerCase()).toContain("relay-live-second-ok");
+  }, 120_000);
+
+  it("compacts a real app-server thread through the relay API", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-live-workspace-"));
+    appServer = new CodexAppServerClient();
+    const app = createApp({ appServer, workspacePath });
+
+    const createResponse = await app.request("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({
+        model: liveModel,
+        runtimeMode: "full-access",
+        title: "Live compact contract",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    const createPayload = await createResponse.json();
+    const threadId = createPayload.thread.id as string;
+
+    const runResponse = await app.request(`/v1/threads/${threadId}/runs/stream`, {
+      method: "POST",
+      body: JSON.stringify({
+        model: liveModel,
+        prompt: "Reply with exactly: relay-live-compact-ok",
+        reasoningEffort: "medium",
+        runtimeMode: "full-access",
+      }),
+      headers: { "content-type": "application/json" },
+    });
+    expect(await runResponse.text()).toContain("relay-live-compact-ok");
+
+    const compactResponse = await app.request(`/v1/threads/${threadId}/compact`, {
+      method: "POST",
+    });
+    expect(compactResponse.status).toBe(202);
+
+    await vi.waitFor(
+      async () => {
+        const thread = await appServer?.readThread(threadId, { includeTurns: true });
+        expect(thread?.turns?.at(-1)).toMatchObject({
+          items: [expect.objectContaining({ type: "contextCompaction" })],
+          status: "completed",
+        });
+      },
+      { interval: 500, timeout: 60_000 },
+    );
   }, 120_000);
 });
 

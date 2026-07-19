@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveCodexAppServerSpawn } from "../src/codex-binary.js";
+import {
+  resolveCodexAppServerMode,
+  resolveCodexAppServerSpawn,
+  resolveCodexSharedAppServerSocketPath,
+} from "../src/codex-binary.js";
 
 describe("Codex app-server spawn resolution", () => {
   it("uses a shell for the default npm command on Windows", () => {
@@ -85,5 +89,42 @@ describe("Codex app-server spawn resolution", () => {
       shell: false,
       windowsHide: false,
     });
+  });
+
+  it("recognizes explicit Unix socket attach mode", () => {
+    expect(resolveCodexAppServerMode({ CODEX_RELAY_APP_SERVER_MODE: "socket" })).toBe("socket");
+  });
+
+  it("rejects unknown app-server modes", () => {
+    expect(() => resolveCodexAppServerMode({ CODEX_RELAY_APP_SERVER_MODE: "shared" })).toThrow(
+      'Expected "stdio", "proxy", or "socket"',
+    );
+  });
+
+  it("resolves the default shared Unix socket under CODEX_HOME", () => {
+    expect(
+      resolveCodexSharedAppServerSocketPath({
+        env: { CODEX_HOME: "/tmp/codex-home" },
+        platform: "darwin",
+      }),
+    ).toBe("/tmp/codex-home/app-server-control/app-server-control.sock");
+  });
+
+  it("accepts an explicit shared Unix socket path", () => {
+    expect(
+      resolveCodexSharedAppServerSocketPath({
+        env: { CODEX_RELAY_APP_SERVER_SOCK: "/tmp/shared.sock" },
+        platform: "linux",
+      }),
+    ).toBe("/tmp/shared.sock");
+  });
+
+  it("rejects native Windows shared socket mode", () => {
+    expect(() =>
+      resolveCodexSharedAppServerSocketPath({
+        env: {},
+        platform: "win32",
+      }),
+    ).toThrow("not supported on native Windows");
   });
 });

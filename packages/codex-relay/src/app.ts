@@ -3443,6 +3443,14 @@ async function resumeAppServerThreadIfNeeded(
   runtime: ReturnType<typeof resolveAppServerRuntime>,
   codexRuntimeDefaults: CodexRuntimeDefaults,
 ) {
+  if (
+    typeof appServer.isThreadSubscribed === "function" &&
+    !appServer.isThreadSubscribed(threadId)
+  ) {
+    await resumeAppServerThread(appServer, threadId, input, runtime, codexRuntimeDefaults);
+    return;
+  }
+
   if (typeof appServer.readThread !== "function") {
     return;
   }

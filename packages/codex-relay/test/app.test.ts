@@ -4365,113 +4365,120 @@ describe("Codex Relay server routes", () => {
     expect(body).toContain('"state":"completed"');
   });
 
-  it("resumes not-loaded app-server threads before continuing a streamed turn", async () => {
-    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
-    const notificationHandlers = new Set<(notification: unknown) => void>();
-    const now = Date.now() / 1000;
-    const appThread = {
-      id: "app-thread-not-loaded",
-      createdAt: now,
-      cwd: workspacePath,
-      modelProvider: "gpt-5.5",
-      name: "Past thread",
-      preview: "First message",
-      source: "app",
-      status: { type: "notLoaded" },
-      turns: [
-        {
-          id: "turn-existing",
-          items: [
-            {
-              id: "existing-user",
-              type: "userMessage",
-              content: [{ type: "text", text: "First message", text_elements: [] }],
-            },
-            { id: "existing-assistant", text: "First reply", type: "agentMessage" },
-          ],
-          status: "completed",
-          startedAt: now,
-          completedAt: now,
+  it.each([
+    { caseName: "not-loaded", status: { type: "notLoaded" }, subscribed: true },
+    { caseName: "unsubscribed idle", status: { type: "idle" }, subscribed: false },
+  ])(
+    "resumes $caseName app-server threads before continuing a streamed turn",
+    async ({ status, subscribed }) => {
+      const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+      const notificationHandlers = new Set<(notification: unknown) => void>();
+      const now = Date.now() / 1000;
+      const appThread = {
+        id: "app-thread-not-loaded",
+        createdAt: now,
+        cwd: workspacePath,
+        modelProvider: "gpt-5.5",
+        name: "Past thread",
+        preview: "First message",
+        source: "app",
+        status,
+        turns: [
+          {
+            id: "turn-existing",
+            items: [
+              {
+                id: "existing-user",
+                type: "userMessage",
+                content: [{ type: "text", text: "First message", text_elements: [] }],
+              },
+              { id: "existing-assistant", text: "First reply", type: "agentMessage" },
+            ],
+            status: "completed",
+            startedAt: now,
+            completedAt: now,
+          },
+        ],
+        updatedAt: now,
+      };
+      const appServer = {
+        isThreadSubscribed: vi.fn<(threadId: string) => boolean>(() => subscribed),
+        onNotification(handler: (notification: unknown) => void) {
+          notificationHandlers.add(handler);
+          return () => notificationHandlers.delete(handler);
         },
-      ],
-      updatedAt: now,
-    };
-    const appServer = {
-      onNotification(handler: (notification: unknown) => void) {
-        notificationHandlers.add(handler);
-        return () => notificationHandlers.delete(handler);
-      },
-      onRequest() {
-        return () => undefined;
-      },
-      readThread: vi.fn<() => Promise<unknown>>(async () => appThread),
-      resumeThread: vi.fn<() => Promise<unknown>>(async () => ({
-        ...appThread,
-        status: { type: "idle" },
-      })),
-      startThread: vi.fn<() => Promise<unknown>>(async () => appThread),
-      startTurn: vi.fn<() => Promise<unknown>>(async () => {
-        queueMicrotask(() => {
-          for (const handler of notificationHandlers) {
-            handler({
-              method: "item/agentMessage/delta",
-              params: {
-                delta: "continued reply",
-                itemId: "assistant-continued",
-                threadId: "app-thread-not-loaded",
-                turnId: "turn-continued",
-              },
-            });
-            handler({
-              method: "turn/completed",
-              params: {
-                threadId: "app-thread-not-loaded",
-                turn: {
-                  id: "turn-continued",
-                  items: [],
-                  status: "completed",
-                  error: null,
-                  startedAt: now,
-                  completedAt: now,
-                  durationMs: 1,
+        onRequest() {
+          return () => undefined;
+        },
+        readThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+        resumeThread: vi.fn<() => Promise<unknown>>(async () => ({
+          ...appThread,
+          status: { type: "idle" },
+        })),
+        startThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+        startTurn: vi.fn<() => Promise<unknown>>(async () => {
+          queueMicrotask(() => {
+            for (const handler of notificationHandlers) {
+              handler({
+                method: "item/agentMessage/delta",
+                params: {
+                  delta: "continued reply",
+                  itemId: "assistant-continued",
+                  threadId: "app-thread-not-loaded",
+                  turnId: "turn-continued",
                 },
-              },
-            });
-          }
-        });
-        return {
-          id: "turn-continued",
-          items: [],
-          status: "inProgress",
-          startedAt: now,
-          completedAt: null,
-        };
-      }),
-    };
-    const app = createApp({
-      appServer: appServer as never,
-      codex: createMockCodex(),
-      workspacePath,
-    });
+              });
+              handler({
+                method: "turn/completed",
+                params: {
+                  threadId: "app-thread-not-loaded",
+                  turn: {
+                    id: "turn-continued",
+                    items: [],
+                    status: "completed",
+                    error: null,
+                    startedAt: now,
+                    completedAt: now,
+                    durationMs: 1,
+                  },
+                },
+              });
+            }
+          });
+          return {
+            id: "turn-continued",
+            items: [],
+            status: "inProgress",
+            startedAt: now,
+            completedAt: null,
+          };
+        }),
+      };
+      const app = createApp({
+        appServer: appServer as never,
+        codex: createMockCodex(),
+        workspacePath,
+      });
 
-    const response = await app.request("/v1/threads/app-thread-not-loaded/runs/stream", {
-      method: "POST",
-      body: JSON.stringify({ prompt: "Continue this" }),
-      headers: { "content-type": "application/json" },
-    });
-    const body = await response.text();
+      const response = await app.request("/v1/threads/app-thread-not-loaded/runs/stream", {
+        method: "POST",
+        body: JSON.stringify({ prompt: "Continue this" }),
+        headers: { "content-type": "application/json" },
+      });
+      const body = await response.text();
 
-    expect(response.status).toBe(200);
-    expect(appServer.resumeThread).toHaveBeenCalledWith(
-      expect.objectContaining({
-        excludeTurns: false,
-        persistExtendedHistory: true,
-        threadId: "app-thread-not-loaded",
-      }),
-    );
-    expect(appServer.startTurn).toHaveBeenCalledTimes(1);
-    expect(body).toContain("continued reply");
-  });
+      expect(response.status).toBe(200);
+      expect(appServer.resumeThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          excludeTurns: false,
+          persistExtendedHistory: true,
+          threadId: "app-thread-not-loaded",
+        }),
+      );
+      expect(appServer.startTurn).toHaveBeenCalledTimes(1);
+      expect(body).toContain("continued reply");
+    },
+  );
 
   it("waits for an externally active app-server thread before starting a streamed turn", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));

@@ -28,6 +28,35 @@ npx codex-relay@latest approve XXXX-XXXX
 
 After approval, the phone can list Codex threads, start new work, stream messages, and handle approval prompts from the local Codex runtime.
 
+## Experimental Shared App-Server Sessions
+
+The default relay starts a private Codex app-server over stdio. On macOS and Linux, you can explicitly ask the relay to attach to an already-running Unix-socket app-server instead:
+
+```sh
+CODEX_RELAY_APP_SERVER_MODE=socket npx codex-relay@latest
+```
+
+Socket mode is attach-only and experimental:
+
+- The relay does not start `codex app-server --listen unix://` for you.
+- The default socket is `${CODEX_HOME:-~/.codex}/app-server-control/app-server-control.sock`.
+- Set `CODEX_RELAY_APP_SERVER_SOCK` to attach to a different Unix socket.
+- If the socket is missing, the connection fails, or the initial JSON-RPC handshake fails, the relay falls back to its private stdio app-server.
+- If an attached socket disconnects, the relay retries with bounded backoff and falls back to stdio when reconnect attempts are exhausted.
+- Stopping the relay closes only its WebSocket connection. It does not stop the external shared app-server.
+- Native Windows shared sockets are not supported. Windows continues to use private stdio mode.
+
+The default remains stdio. Socket mode must always be enabled explicitly.
+
+Maintainers can run the live shared-session contract against a selected model:
+
+```sh
+CODEX_RELAY_LIVE_APP_SERVER_TEST=1 \
+CODEX_RELAY_APP_SERVER_MODE=socket \
+CODEX_RELAY_LIVE_MODEL=gpt-5.6-sol \
+pnpm --filter codex-relay test -- live-mobile-stream-contract.test.ts
+```
+
 ## Background Mode
 
 To keep the relay running after the command returns:
@@ -100,6 +129,8 @@ The relay listens on `0.0.0.0:8787` by default. Configure it with environment va
 | `CODEX_RELAY_AUTH_DB_PATH`             | Pairing and session database path. Defaults to `.codex-relay/auth.db`.                             |
 | `CODEX_RELAY_APPROVAL_SECRET`          | Secret used by the local approve command. Usually generated automatically.                         |
 | `CODEX_RELAY_DANGEROUSLY_AUTO_APPROVE` | Set to `1` to auto-approve mobile pairing requests. Prefer the CLI flag for local use.             |
+| `CODEX_RELAY_APP_SERVER_MODE`          | App-server mode: default `stdio`, existing `proxy`, or experimental Unix attach-only `socket`.     |
+| `CODEX_RELAY_APP_SERVER_SOCK`          | Explicit proxy/shared socket path. In `socket` mode, overrides the default Codex Unix socket.      |
 | `CODEX_HOME`                           | Codex home directory, used when reading Codex session metadata.                                    |
 | `CODEX_BIN`                            | Codex CLI executable path.                                                                         |
 
