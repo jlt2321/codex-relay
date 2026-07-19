@@ -3629,6 +3629,7 @@ async function streamRunningAppServerThread(input: {
   });
 
   let cleanupNotificationHandler = (): void => undefined;
+  let cleanupTransportErrorHandler = (): void => undefined;
   const completed = new Promise<void>((resolve, reject) => {
     cleanupNotificationHandler = input.appServer.onNotification((notification) => {
       const params = recordParams(notification);
@@ -3823,7 +3824,14 @@ async function streamRunningAppServerThread(input: {
         reject(error);
       }
     });
+    if (typeof input.appServer.onTransportError === "function") {
+      cleanupTransportErrorHandler = input.appServer.onTransportError((error) => {
+        cleanupNotificationHandler();
+        reject(error);
+      });
+    }
   });
+  void completed.catch(() => undefined);
 
   try {
     const appServerThread = await input.appServer.readThread(input.threadId, {
@@ -3851,6 +3859,7 @@ async function streamRunningAppServerThread(input: {
   } finally {
     cleanupRequestHandler();
     cleanupNotificationHandler();
+    cleanupTransportErrorHandler();
     closeSseController(input.controller);
   }
 }
@@ -3982,6 +3991,7 @@ async function runAppServerPromptStreamed(input: {
   });
 
   let cleanupNotificationHandler = (): void => undefined;
+  let cleanupTransportErrorHandler = (): void => undefined;
   const completed = new Promise<void>((resolve, reject) => {
     cleanupNotificationHandler = input.appServer.onNotification((notification) => {
       const params = recordParams(notification);
@@ -4230,7 +4240,14 @@ async function runAppServerPromptStreamed(input: {
         reject(error);
       }
     });
+    if (typeof input.appServer.onTransportError === "function") {
+      cleanupTransportErrorHandler = input.appServer.onTransportError((error) => {
+        cleanupNotificationHandler();
+        reject(error);
+      });
+    }
   });
+  void completed.catch(() => undefined);
 
   try {
     const isFirstLocalMessage = (input.messagesByThreadId.get(activeThreadId) ?? []).every(
@@ -4444,6 +4461,8 @@ async function runAppServerPromptStreamed(input: {
     });
   } finally {
     cleanupRequestHandler();
+    cleanupNotificationHandler();
+    cleanupTransportErrorHandler();
     if (!handedOffToQueuedTurn) {
       input.activeAppServerTurnIdsByThreadId.delete(activeThreadId);
       input.steeringThreads.delete(activeThreadId);

@@ -41,6 +41,11 @@ describe("CodexAppServerClient transports", () => {
     vi.stubEnv("CODEX_RELAY_APP_SERVER_MODE", "socket");
     const startChildServer = vi.fn<typeof createFakeStdioAppServer>(createFakeStdioAppServer);
     const client = new CodexAppServerClient({ startChildServer });
+    const transportErrors: Error[] = [];
+    client.onTransportError(() => {
+      throw new Error("Injected transport error handler failure.");
+    });
+    client.onTransportError((error) => transportErrors.push(error));
 
     try {
       await client.initialize();
@@ -59,6 +64,11 @@ describe("CodexAppServerClient transports", () => {
 
       server.failNextInitialize();
       server.connections[0]?.terminate();
+      await vi.waitFor(() => expect(transportErrors).toHaveLength(1));
+      expect(transportErrors[0]?.message).toBe("Shared Codex app-server disconnected.");
+      expect(relayDebugLog).toHaveBeenCalledWith("app_server.transport_error_handler.failed", {
+        message: "Injected transport error handler failure.",
+      });
       await vi.waitFor(() => expect(client.isThreadSubscribed("shared-thread")).toBe(false));
 
       await vi.waitFor(() => expect(server.connections).toHaveLength(3), { timeout: 5_000 });
@@ -77,6 +87,28 @@ describe("CodexAppServerClient transports", () => {
       } finally {
         secondClient.close();
       }
+    } finally {
+      client.close();
+      await server.close();
+      await rm(codexHome, { force: true, recursive: true });
+    }
+  });
+
+  it("does not report a transport error when the client closes normally", async () => {
+    const codexHome = await mkdtemp("/tmp/codex-relay-shared-close-");
+    const socketPath = join(codexHome, "app-server-control", "app-server-control.sock");
+    const server = await startSharedSocketServer(socketPath);
+    vi.stubEnv("CODEX_HOME", codexHome);
+    vi.stubEnv("CODEX_RELAY_APP_SERVER_MODE", "socket");
+    const client = new CodexAppServerClient();
+    const transportErrors: Error[] = [];
+    client.onTransportError((error) => transportErrors.push(error));
+
+    try {
+      await client.initialize();
+      client.close();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(transportErrors).toEqual([]);
     } finally {
       client.close();
       await server.close();

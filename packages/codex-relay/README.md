@@ -42,7 +42,8 @@ Socket mode is attach-only and experimental:
 - The default socket is `${CODEX_HOME:-~/.codex}/app-server-control/app-server-control.sock`.
 - Set `CODEX_RELAY_APP_SERVER_SOCK` to attach to a different Unix socket.
 - If the socket is missing, the connection fails, or the initial JSON-RPC handshake fails, the relay falls back to its private stdio app-server.
-- If an attached socket disconnects, the relay retries with bounded backoff and falls back to stdio when reconnect attempts are exhausted.
+- If an attached socket disconnects, active streamed turns fail closed with a `thread.error` event and the SSE response ends. The relay does not replay a turn because it may contain non-idempotent tool calls.
+- After the active stream is closed, the relay retries the shared connection with bounded backoff and falls back to stdio when reconnect attempts are exhausted. Later requests can continue through the recovered transport.
 - Stopping the relay closes only its WebSocket connection. It does not stop the external shared app-server.
 - Native Windows shared sockets are not supported. Windows continues to use private stdio mode.
 
@@ -55,6 +56,18 @@ CODEX_RELAY_LIVE_APP_SERVER_TEST=1 \
 CODEX_RELAY_APP_SERVER_MODE=socket \
 CODEX_RELAY_LIVE_MODEL=gpt-5.6-sol \
 pnpm --filter codex-relay test -- live-mobile-stream-contract.test.ts
+```
+
+The disconnect contract sends `SIGKILL` to the supplied PID. Run it only against a disposable app-server that you started for the test:
+
+```sh
+CODEX_RELAY_LIVE_APP_SERVER_TEST=1 \
+CODEX_RELAY_APP_SERVER_MODE=socket \
+CODEX_RELAY_LIVE_MODEL=gpt-5.6-sol \
+CODEX_RELAY_LIVE_DISCONNECT_PID=<disposable-app-server-pid> \
+pnpm --filter codex-relay exec vitest run \
+  test/live-mobile-stream-contract.test.ts \
+  -t "fails closed when the shared app-server disconnects and recovers later requests"
 ```
 
 ## Background Mode

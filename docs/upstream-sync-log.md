@@ -73,7 +73,7 @@ precedence over the 2026-07-09 baseline.
 | superseded | Codex binary/window helper | `1732266` | `456497c`, `c9b7151`, `4e1b721` | Patch-equivalent base support exists. Local behavior intentionally defaults to isolated stdio and enables proxy mode only when explicitly requested. |
 | superseded | Base plan-progress implementation | `f55bf40`, `3230d34`, `dadbe39`, `e893026`, `af72651` | `ce2ba4c`, `258e269`, `4edd5e7` | The private branch has its own plan banner and fallback behavior. Later upstream Power/subagent redesign remains a separate conflict item. |
 | superseded | Expo 56, React Native, and Hot Updater dependency levels | dependency portions of `f6dff9d`, `356fad5` | local dependency updates through `e37097e` | Local and upstream currently use Expo `56.0.9`, React Native `0.85.3`, and Hot Updater `0.32.0`; do not import package/lockfile churn solely for these versions. |
-| migrated | Unix attach-only shared app-server core | selected transport/reconnect portions of `dd7ac93`, `baa714c` | current uncommitted shared-session implementation | Adds stdio/WebSocket transport abstraction, explicit macOS/Linux `socket` mode, Unix socket discovery, attach-only ownership, bounded reconnect, per-attempt socket cleanup, initial-handshake and reconnect-exhaustion stdio fallback, ownership-safe close, diagnostics, and fake-socket regression tests. Stdio remains the default; no external app-server is started or killed. |
+| migrated | Unix attach-only shared app-server core | selected transport/reconnect portions of `dd7ac93`, `baa714c` | `5bead78` plus the current failure-closure worktree | Adds stdio/WebSocket transport abstraction, explicit macOS/Linux `socket` mode, Unix socket discovery, attach-only ownership, bounded reconnect, per-attempt socket cleanup, initial-handshake and reconnect-exhaustion stdio fallback, ownership-safe close, diagnostics, in-flight stream failure closure, and fake-socket regression tests. Stdio remains the default; no external app-server is started or killed. |
 
 ### Remaining Upstream Content Not Migrated
 
@@ -111,7 +111,7 @@ as the following independently reviewable pieces. Native Windows behavior from
 | 3. Unix socket discovery | `dd7ac93`, `baa714c` | Resolve `${CODEX_HOME:-~/.codex}/app-server-control/app-server-control.sock` and detect an already-running shared server. | Socket path is a Codex implementation contract and may change between CLI versions. Missing/stale paths must not break normal stdio startup. | migrated for macOS/Linux attach-only mode; missing or failed sockets fall back to stdio. |
 | 4. Attach-first ownership | `baa714c` | Attach to an existing socket without spawning or taking ownership of the external app-server. | Prevents duplicate listeners and prevents the relay from killing a server owned by another Codex client. | migrated as attach-only; relay-owned shared listeners are intentionally not implemented. |
 | 5. Relay-owned listener startup | `dd7ac93`, refined by `baa714c` | If no shared socket exists, spawn `codex app-server --listen unix://` and poll for readiness. | Starting a shared server broadens relay ownership and can reintroduce the 5.6/model-list regression. Startup timeout and stderr handling must remain bounded. | deferred phase 2: start with attach-only mode; add spawn-if-absent only after 5.6 validation. |
-| 6. Disconnect and reconnect state machine | `baa714c` | On relay WebSocket reset, reject in-flight requests, reinitialize JSON-RPC, and reconnect with bounded backoff without stopping the shared server. | Concurrency-sensitive: must prevent duplicate reconnect loops, handle close during backoff, clean up sockets whose initialize handshake failed, restore connection-scoped thread subscriptions, and avoid replaying non-idempotent requests. | migrated; every reconnect reinitializes JSON-RPC, failed attempts close their socket, subscription state is cleared so the next turn resumes the thread, and exhaustion falls back to private stdio. |
+| 6. Disconnect and reconnect state machine | `baa714c` | On relay WebSocket reset, reject in-flight requests, reinitialize JSON-RPC, and reconnect with bounded backoff without stopping the shared server. | Concurrency-sensitive: must prevent duplicate reconnect loops, handle close during backoff, clean up sockets whose initialize handshake failed, restore connection-scoped thread subscriptions, and avoid replaying non-idempotent requests. | migrated; active SSE turns fail closed with `thread.error` and are never replayed, every reconnect reinitializes JSON-RPC, failed attempts close their socket, subscription state is cleared so the next request resumes the thread, and exhaustion falls back to private stdio. |
 | 7. Lifecycle and ownership-safe shutdown | `dd7ac93`, `baa714c` | Close relay sockets/readlines while never terminating an external shared app-server. | Incorrect cleanup can terminate terminal/mobile shared sessions or leave orphan listeners. | migrated for attach-only ownership and covered by a second-client reuse test. |
 | 8. Diagnostics | `baa714c` | Emit attached, fallback, disconnected, reconnecting, and reconnected events. | Must not log prompts, auth data, pairing secrets, or provider keys. | migrated with non-sensitive socket path/error metadata. |
 | 9. CLI/startup integration | `dd7ac93` | Add an opt-in CLI flag, initialize the shared client before serving HTTP, register signal cleanup, and print `codex resume --remote unix://`. | Private launchd/tmux control may set environment variables instead of using the upstream CLI flag. Startup failure must not disable normal relay recovery. | deferred: integrate only after the client layer is validated. |
@@ -188,9 +188,28 @@ progress, relay API/schema/app-server, Codex binary tests, and `pnpm-lock.yaml`.
   were still routed away from the new relay connection.
 - Added per-client thread subscription tracking. New clients and reconnected
   sockets now call `thread/resume` before continuing an existing thread.
+- Added explicit in-flight failure closure for shared-transport disconnects.
+  Both newly started and already-running SSE turns emit `thread.error`, mark the
+  relay thread failed, and close the stream. The relay never automatically
+  replays the interrupted turn because tool calls may be non-idempotent; its
+  existing reconnect/fallback loop remains available for later requests.
 - The live contract then passed all three scenarios with `gpt-5.6-sol`: first
   turn streaming, cross-client continuation, and relay API compaction ending in
   a completed `contextCompaction` item (`178 passed`).
+- The failure-closure regression suite passes with 181 tests and 4 live-only
+  tests skipped, including handler isolation, normal-close behavior, and the
+  concurrent rejection cases where transport loss also rejects a pending
+  `thread/read` or `turn/start` request. The SSE completion promises are marked
+  handled immediately while preserving their later rejection semantics.
+- A disposable Codex CLI `0.142.5` shared server and `gpt-5.6-sol` passed the
+  three existing live contracts (`182 passed`). A separate forced-disconnect
+  contract confirmed that `SIGTERM` is graceful and waits for the turn, while
+  `SIGKILL` produces the intended transport reset: the active SSE failed closed
+  with `thread.error`, the replacement shared server started on the same socket,
+  and the original relay client recovered `model/list` through its reconnect
+  loop. The same `SIGKILL` failure-closure and same-version recovery contract
+  also passed with Codex CLI `0.144.5` and `gpt-5.6-sol`. The live test requires
+  an explicit disposable server PID.
 - The manually started app-server was stopped after validation; no merge,
   cherry-pick, commit, or push was performed.
 

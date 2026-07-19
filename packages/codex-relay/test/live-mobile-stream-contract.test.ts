@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,11 @@ import {
 const runLiveAppServerTest = process.env.CODEX_RELAY_LIVE_APP_SERVER_TEST === "1";
 const liveDescribe = runLiveAppServerTest ? describe : describe.skip;
 const liveModel = process.env.CODEX_RELAY_LIVE_MODEL?.trim() || "gpt-5.5";
+const liveDisconnectPid = Number(process.env.CODEX_RELAY_LIVE_DISCONNECT_PID);
+const runLiveDisconnectTest =
+  runLiveAppServerTest && Number.isSafeInteger(liveDisconnectPid) && liveDisconnectPid > 1
+    ? true
+    : false;
 
 liveDescribe("live mobile stream contract", () => {
   let appServer: CodexAppServerClient | undefined;
@@ -189,7 +195,98 @@ liveDescribe("live mobile stream contract", () => {
       { interval: 500, timeout: 60_000 },
     );
   }, 120_000);
+
+  it.runIf(runLiveDisconnectTest)(
+    "fails closed when the shared app-server disconnects and recovers later requests",
+    async () => {
+      const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-live-disconnect-"));
+      appServer = new CodexAppServerClient();
+      const app = createApp({ appServer, workspacePath });
+      let replacementServer: ChildProcess | undefined;
+      let resolveTurnStarted = (): void => undefined;
+      const turnStarted = new Promise<void>((resolve) => {
+        resolveTurnStarted = resolve;
+      });
+      const cleanupNotification = appServer.onNotification((notification) => {
+        if (notification.method === "turn/started") {
+          resolveTurnStarted();
+        }
+      });
+
+      try {
+        const createResponse = await app.request("/v1/threads", {
+          method: "POST",
+          body: JSON.stringify({
+            model: liveModel,
+            runtimeMode: "full-access",
+            title: "Live disconnect closure",
+          }),
+          headers: { "content-type": "application/json" },
+        });
+        const createPayload = await createResponse.json();
+        const threadId = createPayload.thread.id as string;
+
+        const response = await app.request(`/v1/threads/${threadId}/runs/stream`, {
+          method: "POST",
+          body: JSON.stringify({
+            model: liveModel,
+            prompt: "Reply with exactly: should-not-complete-before-disconnect",
+            reasoningEffort: "high",
+            runtimeMode: "full-access",
+          }),
+          headers: { "content-type": "application/json" },
+        });
+        const bodyPromise = response.text();
+        await Promise.race([
+          turnStarted,
+          rejectAfter(30_000, "Timed out waiting for turn/started."),
+        ]);
+
+        process.kill(liveDisconnectPid, "SIGKILL");
+        const body = await Promise.race([
+          bodyPromise,
+          rejectAfter(10_000, "SSE did not close after the transport disconnected."),
+        ]);
+
+        expect(response.status).toBe(200);
+        expect(body).toContain("thread.error");
+        expect(body).toContain("codex_run_failed");
+        expect(body).toContain("Shared Codex app-server disconnected.");
+        expect(body).toContain('"state":"failed"');
+
+        replacementServer = spawn(
+          process.env.CODEX_RELAY_LIVE_CODEX_BIN?.trim() || "codex",
+          ["app-server", "--listen", "unix://"],
+          { detached: true, stdio: "ignore" },
+        );
+        replacementServer.unref();
+
+        await vi.waitFor(
+          async () => {
+            await expect(appServer?.listModels()).resolves.not.toEqual([]);
+          },
+          { interval: 200, timeout: 12_000 },
+        );
+      } finally {
+        cleanupNotification();
+        if (replacementServer?.pid) {
+          try {
+            process.kill(-replacementServer.pid, "SIGTERM");
+          } catch {
+            // The replacement may already have exited during test cleanup.
+          }
+        }
+      }
+    },
+    60_000,
+  );
 });
+
+function rejectAfter(ms: number, message: string) {
+  return new Promise<never>((_resolve, reject) => {
+    setTimeout(() => reject(new Error(message)), ms);
+  });
+}
 
 function consumeAsMobileChatStream(body: string, threadId: string) {
   const errors: Error[] = [];

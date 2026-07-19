@@ -1946,6 +1946,130 @@ describe("Codex Relay server routes", () => {
     expect(body).toContain('"state":"idle"');
   });
 
+  it("closes an attached running app-server stream when the transport disconnects", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const transportErrorHandlers = new Set<(error: Error) => void>();
+    const now = Date.now() / 1000;
+    const appServer = {
+      onNotification() {
+        return () => undefined;
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      onTransportError(handler: (error: Error) => void) {
+        transportErrorHandlers.add(handler);
+        return () => transportErrorHandlers.delete(handler);
+      },
+      readThread: vi.fn<() => Promise<unknown>>(async () => {
+        queueMicrotask(() => {
+          for (const handler of transportErrorHandlers) {
+            handler(new Error("Shared Codex app-server disconnected."));
+          }
+        });
+        return {
+          id: "app-thread-attached-disconnect",
+          createdAt: now,
+          cwd: workspacePath,
+          modelProvider: "gpt-5.6-sol",
+          name: "Attached disconnect",
+          preview: "Attached disconnect",
+          source: "app",
+          status: { type: "active" },
+          turns: [],
+          updatedAt: now,
+        };
+      }),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    const response = await app.request("/v1/threads/app-thread-attached-disconnect/runs/stream", {
+      method: "POST",
+      body: JSON.stringify({}),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await Promise.race([
+      response.text(),
+      new Promise<string>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("Attached app-server disconnect left SSE open.")), 500),
+      ),
+    ]);
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("thread.error");
+    expect(body).toContain("codex_run_failed");
+    expect(body).toContain("Shared Codex app-server disconnected.");
+    expect(body).toContain('"state":"failed"');
+  });
+
+  it("closes an attached stream when transport loss rejects the pending thread read", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const transportErrorHandlers = new Set<(error: Error) => void>();
+    const now = Date.now() / 1000;
+    let readCount = 0;
+    const appServer = {
+      onNotification() {
+        return () => undefined;
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      onTransportError(handler: (error: Error) => void) {
+        transportErrorHandlers.add(handler);
+        return () => transportErrorHandlers.delete(handler);
+      },
+      readThread: vi.fn<() => Promise<unknown>>(() => {
+        if (readCount++ === 0) {
+          return Promise.resolve({
+            id: "app-thread-pending-read-disconnect",
+            createdAt: now,
+            cwd: workspacePath,
+            modelProvider: "gpt-5.6-sol",
+            name: "Pending read disconnect",
+            preview: "Pending read disconnect",
+            source: "app",
+            status: { type: "active" },
+            turns: [],
+            updatedAt: now,
+          });
+        }
+        return new Promise((_resolve, reject) => {
+          queueMicrotask(() => {
+            const error = new Error("Shared Codex app-server disconnected.");
+            for (const handler of transportErrorHandlers) {
+              handler(error);
+            }
+            reject(error);
+          });
+        });
+      }),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    const response = await app.request(
+      "/v1/threads/app-thread-pending-read-disconnect/runs/stream",
+      {
+        method: "POST",
+        body: JSON.stringify({}),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("thread.error");
+    expect(body).toContain("Shared Codex app-server disconnected.");
+    expect(body).toContain('"state":"failed"');
+  });
+
   it("keeps attached running app-server streams alive through transient idle status", async () => {
     const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
     const notificationHandlers = new Set<(notification: unknown) => void>();
@@ -4629,6 +4753,148 @@ describe("Codex Relay server routes", () => {
     expect(response.status).toBe(200);
     expect(body).toContain("thread.error");
     expect(body).toContain("Approval request timed out.");
+    expect(body).toContain('"state":"failed"');
+  });
+
+  it("closes app-server streams when the transport disconnects during a turn", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const notificationHandlers = new Set<(notification: unknown) => void>();
+    const transportErrorHandlers = new Set<(error: Error) => void>();
+    const now = Date.now() / 1000;
+    const appServer = {
+      onNotification(handler: (notification: unknown) => void) {
+        notificationHandlers.add(handler);
+        return () => notificationHandlers.delete(handler);
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      onTransportError(handler: (error: Error) => void) {
+        transportErrorHandlers.add(handler);
+        return () => transportErrorHandlers.delete(handler);
+      },
+      startThread: vi.fn<() => Promise<unknown>>(async () => ({
+        id: "app-thread-transport-disconnect",
+        createdAt: now,
+        cwd: workspacePath,
+        modelProvider: "gpt-5.6-sol",
+        name: "Transport disconnect",
+        preview: "Transport disconnect",
+        source: "app",
+        status: "idle",
+        turns: [],
+        updatedAt: now,
+      })),
+      startTurn: vi.fn<() => Promise<unknown>>(async () => {
+        queueMicrotask(() => {
+          for (const handler of transportErrorHandlers) {
+            handler(new Error("Shared Codex app-server disconnected."));
+          }
+        });
+        return {
+          id: "turn-transport-disconnect",
+          items: [],
+          status: "running",
+          startedAt: now,
+          completedAt: null,
+        };
+      }),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    await app.request("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ title: "Transport disconnect" }),
+      headers: { "content-type": "application/json" },
+    });
+    const response = await app.request("/v1/threads/app-thread-transport-disconnect/runs/stream", {
+      method: "POST",
+      body: JSON.stringify({ prompt: "Run until disconnected" }),
+      headers: { "content-type": "application/json" },
+    });
+    const body = await Promise.race([
+      response.text(),
+      new Promise<string>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("App-server disconnect left SSE open.")), 500),
+      ),
+    ]);
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("thread.error");
+    expect(body).toContain("codex_run_failed");
+    expect(body).toContain("Shared Codex app-server disconnected.");
+    expect(body).toContain('"state":"failed"');
+  });
+
+  it("closes a stream when transport loss rejects the pending turn start", async () => {
+    const workspacePath = await mkdtemp(join(tmpdir(), "codex-relay-workspace-"));
+    const transportErrorHandlers = new Set<(error: Error) => void>();
+    const now = Date.now() / 1000;
+    const appThread = {
+      id: "app-thread-pending-turn-disconnect",
+      createdAt: now,
+      cwd: workspacePath,
+      modelProvider: "gpt-5.6-sol",
+      name: "Pending turn disconnect",
+      preview: "Pending turn disconnect",
+      source: "app",
+      status: "idle",
+      turns: [],
+      updatedAt: now,
+    };
+    const appServer = {
+      onNotification() {
+        return () => undefined;
+      },
+      onRequest() {
+        return () => undefined;
+      },
+      onTransportError(handler: (error: Error) => void) {
+        transportErrorHandlers.add(handler);
+        return () => transportErrorHandlers.delete(handler);
+      },
+      startThread: vi.fn<() => Promise<unknown>>(async () => appThread),
+      startTurn: vi.fn<() => Promise<unknown>>(
+        () =>
+          new Promise((_resolve, reject) => {
+            queueMicrotask(() => {
+              const error = new Error("Shared Codex app-server disconnected.");
+              for (const handler of transportErrorHandlers) {
+                handler(error);
+              }
+              reject(error);
+            });
+          }),
+      ),
+    };
+    const app = createApp({
+      appServer: appServer as never,
+      codex: createMockCodex(),
+      workspacePath,
+    });
+
+    await app.request("/v1/threads", {
+      method: "POST",
+      body: JSON.stringify({ title: "Pending turn disconnect" }),
+      headers: { "content-type": "application/json" },
+    });
+    const response = await app.request(
+      "/v1/threads/app-thread-pending-turn-disconnect/runs/stream",
+      {
+        method: "POST",
+        body: JSON.stringify({ prompt: "Disconnect while starting" }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    const body = await response.text();
+
+    expect(response.status).toBe(200);
+    expect(body).toContain("thread.error");
+    expect(body).toContain("Shared Codex app-server disconnected.");
     expect(body).toContain('"state":"failed"');
   });
 

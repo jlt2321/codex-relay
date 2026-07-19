@@ -243,6 +243,7 @@ export class CodexAppServerClient {
   private socket: WebSocket | undefined;
   private startChildServer: () => ChildProcessWithoutNullStreams;
   private subscribedThreadIds = new Set<string>();
+  private transportErrorHandlers = new Set<(error: Error) => void>();
 
   constructor(options: CodexAppServerClientOptions = {}) {
     this.startChildServer = options.startChildServer ?? spawnCodexAppServer;
@@ -341,6 +342,11 @@ export class CodexAppServerClient {
   onRequest(handler: (request: AppServerRequest) => void) {
     this.requestHandlers.add(handler);
     return () => this.requestHandlers.delete(handler);
+  }
+
+  onTransportError(handler: (error: Error) => void) {
+    this.transportErrorHandlers.add(handler);
+    return () => this.transportErrorHandlers.delete(handler);
   }
 
   async respondToRequest(id: number, result: unknown) {
@@ -577,10 +583,23 @@ export class CodexAppServerClient {
     this.subscribedThreadIds.clear();
     this.socket = undefined;
     this.rejectAll(error);
+    this.emitTransportError(error);
     relayDebugLog("app_server.shared_socket.disconnected", { message: error.message });
     if (shouldReconnect) {
       this.initialized = undefined;
       this.scheduleSharedSocketReconnect();
+    }
+  }
+
+  private emitTransportError(error: Error) {
+    for (const handler of this.transportErrorHandlers) {
+      try {
+        handler(error);
+      } catch (handlerError) {
+        relayDebugLog("app_server.transport_error_handler.failed", {
+          message: asError(handlerError).message,
+        });
+      }
     }
   }
 
