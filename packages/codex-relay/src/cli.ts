@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 
 import { apiPaths } from "./api-schema.js";
 import { readRunningRelayPid } from "./background-process.js";
+import { applyServerCliEnvironment } from "./cli-options.js";
 import { createTursoPairingSessionStore } from "./pairing-store.js";
 import { getConnectUrlGuidance } from "./pairing-url-candidates.js";
 
@@ -37,6 +38,7 @@ const program = new Command()
   .description("Run and approve the codex-relay local CLI bridge.")
   .option("--bg", "run the Codex Relay server in the background")
   .option("--debug", "write verbose relay diagnostics to debug.log")
+  .option("--shared-app-server", "attach to an existing shared Codex app-server Unix socket")
   .option(
     "--dangerously-auto-approve",
     "automatically approve mobile pairing requests without a local approval command",
@@ -47,18 +49,14 @@ const program = new Command()
 
 Examples:
   ${npxCommand}              Start the relay and print a pairing QR
+  ${npxCommand} --shared-app-server Attach to an existing shared app-server
   ${npxCommand} --bg         Start the relay in the background
   ${npxCommand} qr           Print the current pairing QR
   ${npxCommand} clear        Sign out every paired mobile app
   ${npxCommand} approve CODE Approve a pending mobile pairing request`,
   )
   .action(async (options) => {
-    if (options.debug) {
-      process.env.CODEX_RELAY_DEBUG = "1";
-    }
-    if (options.dangerouslyAutoApprove) {
-      process.env.CODEX_RELAY_DANGEROUSLY_AUTO_APPROVE = "1";
-    }
+    applyServerCliEnvironment(options);
 
     if (options.bg) {
       await startBackgroundServer();

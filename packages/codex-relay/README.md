@@ -33,8 +33,10 @@ After approval, the phone can list Codex threads, start new work, stream message
 The default relay starts a private Codex app-server over stdio. On macOS and Linux, you can explicitly ask the relay to attach to an already-running Unix-socket app-server instead:
 
 ```sh
-CODEX_RELAY_APP_SERVER_MODE=socket npx codex-relay@latest
+npx codex-relay@latest --shared-app-server
 ```
+
+`CODEX_RELAY_APP_SERVER_MODE=socket` remains available for launchd, tmux, and other environment-managed deployments.
 
 Socket mode is attach-only and experimental:
 
